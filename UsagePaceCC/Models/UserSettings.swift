@@ -9,6 +9,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import CryptoKit
 import ServiceManagement
 import OSLog
 
@@ -530,6 +531,38 @@ class UserSettings: ObservableObject {
     /// Codex CLI 侧的订阅计划类型
     @Published private(set) var codexCLIPlanType: String?
 
+    #if DEBUG
+    private static let codexCLIConsentedAccountHashKey = "DEBUG_codexCLIConsentedAccountHash"
+    #else
+    private static let codexCLIConsentedAccountHashKey = "codexCLIConsentedAccountHash"
+    #endif
+
+    /// 用户 opt-in 当时那份 CLI 凭据的 `chatgpt_account_id` 的 **SHA-256 十六进制摘要**，
+    /// 持久化到 UserDefaults。
+    /// - Important: 同意是针对**某一个 ChatGPT 账户**给出的，不是针对"任何将来出现在
+    ///   `~/.codex/auth.json` 里的账户"。之后 `codex login` 换成另一个账户时，不能拿旧的
+    ///   同意继续把新账户的 token 发出去。
+    /// - Important: 这里只做相等性比对，原始 id 一点用处都没有，所以不落盘明文：
+    ///   UserDefaults 是明文 plist，会进备份，任何以该用户身份运行的程序都读得到。
+    ///   plan.md phase-02 的 Security Considerations 只认可把这个 id **留在内存里**做 D12 比对。
+    ///   不加盐——这不是口令材料，每安装一份盐还得跟摘要一起落盘，对已经能读 prefs 的攻击者毫无意义。
+    ///   摘要与原始 id 一样，永不渲染、永不写日志。
+    private var codexCLIConsentedAccountHash: String? {
+        didSet {
+            defaults.set(codexCLIConsentedAccountHash, forKey: Self.codexCLIConsentedAccountHashKey)
+        }
+    }
+
+    /// 把 ChatGPT account id 折算成 SHA-256 十六进制摘要，仅供上面的相等性比对使用
+    private static func consentDigest(for accountId: String) -> String {
+        SHA256.hash(data: Data(accountId.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    /// 探测到的 CLI 账户与用户当初同意的那个不一致，opt-in 已被自动撤回，等待用户重新确认。
+    @Published private(set) var codexCLIAccountChanged: Bool = false
+
     /// Codex Browser 侧的 ChatGPT account id —— D12 账户比对的关键字段
     /// - Note: 由 `CodexBrowserUsageSource` 在一次用量请求成功后解析 `accessToken` 的
     ///   `https://api.openai.com/auth` claim 并写入；解析失败或尚未成功请求过时保持 nil
@@ -586,6 +619,8 @@ class UserSettings: ObservableObject {
         let wasConfigured = isCLISourceConfigured
         let previousLabel = codexCLIAccountLabel
 
+        var revokedForAccountChange = false
+
         do {
             let auth = try CodexCLIAuthReader.read()
             codexCLIDetected = true
@@ -594,6 +629,18 @@ class UserSettings: ObservableObject {
             codexCLIPlanType = auth.planType
             codexCLIError = nil
             Logger.api.debug("Codex CLI 已检测到，凭据有效")
+
+            // 换账户后不自动续用旧的同意：撤回 opt-in，退回 pending 状态等用户重新确认。
+            // 两个 id 都非 nil 且不相等才触发 —— 任一为 nil 一律保持沉默（同 D12）。
+            if codexCLIEnabled,
+               let consented = codexCLIConsentedAccountHash,
+               let current = auth.chatgptAccountId,
+               Self.consentDigest(for: current) != consented {
+                codexCLIEnabled = false
+                codexCLIAccountChanged = true
+                revokedForAccountChange = true
+                Logger.settings.notice("Codex CLI 凭据换成了另一个 ChatGPT 账户，已撤回 opt-in")
+            }
         } catch let error as CodexCLIAuthError {
             codexCLIError = error
             // 失败时派生信息一律清空；是否"已配置"只由下面的 switch 决定。
@@ -620,8 +667,11 @@ class UserSettings: ObservableObject {
             }
         } catch {
             // `CodexCLIAuthReader.read()` 只抛 `CodexCLIAuthError`，这里理论上不可达；
-            // 万一到达，用一次廉价的存在性探测决定是否算已配置，不臆断为"未安装"。
-            codexCLIDetected = CodexCLIAuthReader.isPresent
+            // 万一到达，按 D13 一律算「已配置但当前失败」。
+            // - Important: 不要改回 `CodexCLIAuthReader.isPresent`：它是 `isReadableFile`，
+            //   沙盒拒绝时返回 false，而上面的 switch 恰恰把沙盒拒绝判为 `detected = true`。
+            //   同一个物理状态两处给相反答案，只会在回退到 Browser 来源时静默换掉账户。
+            codexCLIDetected = true
             codexCLIAccountLabel = nil
             codexCLIChatGPTAccountId = nil
             codexCLIPlanType = nil
@@ -635,7 +685,9 @@ class UserSettings: ObservableObject {
         // 显示偏好的默认补齐只发生在显式 opt-in（`setCodexCLIEnabled(true)`）或新增 Browser 账户时。
         let changed = (wasConfigured != isCLISourceConfigured)
             || (isCLISourceConfigured && previousLabel != codexCLIAccountLabel)
-        if changed {
+        // 撤回 opt-in 时不再发 `.accountChanged`：`$codexCLIEnabled` 的订阅已经会清空 Codex 状态
+        // 并按需重新拉取，两条路径都发一次就会互相 cancel，闪出一行 `URLError.cancelled`。
+        if changed && !revokedForAccountChange {
             postAccountChanged(provider: .codex)
         }
         return changed
@@ -646,14 +698,29 @@ class UserSettings: ObservableObject {
     ///   后台探测永远不改用户已持久化的 `customDisplayTypes`。
     func setCodexCLIEnabled(_ enabled: Bool) {
         guard codexCLIEnabled != enabled else { return }
-        codexCLIEnabled = enabled
+
         if enabled {
-            // 重新读一次凭据，让状态行立刻显示邮箱 / 计划类型，而不是等下一个刷新周期
+            // 先探测、后翻开关（同冷启动那处的排序修复）：探测时 CLI 仍未启用，
+            // `isCLISourceConfigured` 恒为 false，`refreshCodexCLIState()` 不会发
+            // `.accountChanged`。反过来先翻开关的话，若邮箱/标签自启动探测以来变过，
+            // 探测会发一次通知触发 `fetchCodexOnly()`，随后 `$codexCLIEnabled` 的订阅再发一次，
+            // 而 `CodexAPIService.fetchUsage` 开头会 cancelAllRequests，前一次被打断成
+            // `URLError.cancelled`，弹窗闪一行 Codex 错误。
             refreshCodexCLIState()
+            // 记录本次同意针对的账户（只存摘要）；换成别的 ChatGPT 账户后需要重新确认
+            // （见 refreshCodexCLIState）
+            codexCLIConsentedAccountHash = codexCLIChatGPTAccountId.map { Self.consentDigest(for: $0) }
+            codexCLIAccountChanged = false
+            codexCLIEnabled = true
             if hasValidCodexCredentials {
                 ensureDefaultCodexDisplayTypesForCustomMode()
             }
+        } else {
+            codexCLIEnabled = false
+            codexCLIConsentedAccountHash = nil
+            codexCLIAccountChanged = false
         }
+
         Logger.settings.notice("Codex CLI 来源已\(enabled ? "启用" : "关闭", privacy: .public)")
     }
 
@@ -1081,6 +1148,10 @@ class UserSettings: ObservableObject {
         let codexCLIEnabledKey = "codexCLIEnabled"
         #endif
         self.codexCLIEnabled = defaults.bool(forKey: codexCLIEnabledKey)
+
+        // 加载用户 opt-in 时同意的那个 ChatGPT 账户 id 的摘要（D12 同款比对字段）。
+        // 只用于比对，永不进入 UI、日志或网络请求。
+        self.codexCLIConsentedAccountHash = defaults.string(forKey: Self.codexCLIConsentedAccountHashKey)
 
         // MARK: - 旧版迁移（v1.x → v2.0.0，保留向后兼容）
 

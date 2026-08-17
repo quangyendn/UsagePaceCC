@@ -73,6 +73,13 @@ struct AuthSettingsView: View {
             }
             .padding()
         }
+        // 打开 Auth 页时重新探测一次 CLI 凭据（只读，D10）。Re-scan 按钮长在 `sourceRow(.cli)` 里，
+        // 而 opt-in 未完成时那一行根本不渲染；纯 Codex CLI 用户又没有任何 Claude 凭据，
+        // `ensureRefreshingIfCredentialed()` 直接返回、定时器不启动，于是 `fetchUsage()` 里的
+        // 周期性探测也不会跑 —— 不在这里探测的话，`codex login` 之后必须重启 App 才看得到 opt-in。
+        .onAppear {
+            settings.refreshCodexCLIState()
+        }
         .alert(L.Account.deleteConfirmTitle, isPresented: $showDeleteConfirmation) {
             Button(L.Account.cancel, role: .cancel) {}
             Button(L.Account.delete, role: .destructive) {
@@ -143,9 +150,13 @@ struct AuthSettingsView: View {
                     }
                 }
 
-                // Codex 双来源选择区（D8'/D9）：仅当至少一个来源已配置时出现，
-                // 保证纯 Claude 用户看到的 Auth 页与改动前完全一致（区块整体缺席，而非空区块）。
-                if settings.isCLISourceConfigured || settings.isBrowserSourceConfigured {
+                // Codex 双来源选择区（D8'/D9）：仅当至少一个来源已配置、或用户曾显式启用过
+                // CLI 时出现，保证纯 Claude 用户看到的 Auth 页与改动前完全一致（区块整体缺席，
+                // 而非空区块）。
+                // - Important: `codexCLIEnabled` 单独成一个条件。已 opt-in 但凭据文件暂时不在
+                //   （`codex logout`、换机器、目录被删）时，前两个条件都是 false；若区块跟着消失，
+                //   用户既看不到自己给过同意，也没有 Disable 按钮可以撤回。
+                if settings.isCLISourceConfigured || settings.isBrowserSourceConfigured || settings.codexCLIEnabled {
                     codexSourceSection
                 } else if settings.isCodexCLIOptInPending {
                     // 只检测到 CLI、用户还没启用：只多出一行 opt-in 提示，没有区块标题、
@@ -207,6 +218,21 @@ struct AuthSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                // 同意已被自动撤回：磁盘上的 CLI 凭据换成了另一个 ChatGPT 账户。
+                // 账户 id 本身永不展示，只说明「换了个账户」。
+                if settings.codexCLIAccountChanged {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        Text(L.SettingsAuth.codexCliAccountChanged)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 2)
+                }
             }
 
             Spacer()
@@ -318,6 +344,11 @@ struct AuthSettingsView: View {
     private func sourceStateLine(_ source: CodexSource) -> String {
         switch source {
         case .cli:
+            // 已 opt-in 但当前读不到凭据文件：既不是"没启用"也不是"能用"，单独一行说清楚，
+            // 免得用户以为自己的同意被悄悄丢了。修复方式由 `sourceHint` 给出。
+            if settings.codexCLIEnabled && !settings.codexCLIDetected {
+                return L.SettingsAuth.codexCliEnabledMissing
+            }
             if let error = settings.codexCLIError {
                 switch error {
                 case .tokenExpired:
