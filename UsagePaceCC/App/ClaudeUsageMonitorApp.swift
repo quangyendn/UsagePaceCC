@@ -53,6 +53,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 探测 Codex CLI 凭据文件（只读，见 D10），使仅配置了 CLI 的用户不会被误判为未登录。
         // - Important: 必须在 `MenuBarManager()` **之前**。`codexCLIDetected` 初值为 false，
+        //   对已 opt-in 的用户来说 `isCLISourceConfigured` 冷启动同样是 false→true，
         //   冷启动首探必定是 false→true 的跳变并发出 `.accountChanged`；若 MenuBarManager 已经
         //   订阅上了，就会先触发一次 `fetchCodexOnly()`，紧接着 `ensureRefreshingIfCredentialed()`
         //   再发一次 —— 而 `CodexAPIService.fetchUsage` 开头会 cancelAllRequests，后一次把前一次

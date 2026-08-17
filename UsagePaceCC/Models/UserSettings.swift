@@ -493,6 +493,21 @@ class UserSettings: ObservableObject {
         }
     }
 
+    /// 用户是否**显式**启用了 Codex CLI 来源，持久化到 UserDefaults，默认 false。
+    /// - Important: 磁盘上存在 `~/.codex/auth.json` 只说明"检测到"，不等于用户同意本 App
+    ///   拿这份 token 去请求用量。检测与启用必须分开：未启用前不发任何 CLI 网络请求、不改菜单栏、
+    ///   不改弹窗、不改显示偏好，Auth 页也只多出一行可忽略的 opt-in 提示。
+    @Published private(set) var codexCLIEnabled: Bool {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_codexCLIEnabled"
+            #else
+            let key = "codexCLIEnabled"
+            #endif
+            defaults.set(codexCLIEnabled, forKey: key)
+        }
+    }
+
     /// Codex CLI 是否被检测到（= 凭据文件存在）。
     /// - Important: D13 的判定标准是"文件在不在"，不是"文件能不能用"。过期、被沙盒拒绝、
     ///   无法解析、缺少 access_token —— 这四种都属于「已配置但当前失败」，一律保持 `true`，
@@ -523,10 +538,16 @@ class UserSettings: ObservableObject {
     /// 是否存在任意一个 Codex 凭据来源（CLI 或 Browser）
     /// - Important: 只用于"是否存在来源"的判断（existence gate）。凡是需要遍历真实账户列表
     ///   或对 `codexAccounts` 做增删的地方，一律保持读 `codexAccounts` 本身，不要替换成这个属性（D11）。
-    var hasAnyCodexSource: Bool { codexCLIDetected || !codexAccounts.isEmpty }
+    var hasAnyCodexSource: Bool { isCLISourceConfigured || !codexAccounts.isEmpty }
 
-    /// CLI 来源是否已配置（凭据文件存在即算已配置；过期/不可读/无法解析都不触发向 Browser 的可用性回退 —— D13）
-    var isCLISourceConfigured: Bool { codexCLIDetected }
+    /// CLI 来源是否已配置 = 用户已显式启用 **且** 凭据文件存在。
+    /// - Important: 两个条件的分工不同，不要合并理解：`codexCLIEnabled` 是"用户同不同意"，
+    ///   `codexCLIDetected` 是 D13 的"文件在不在"（过期/不可读/无法解析都仍算存在，
+    ///   属于「已配置但当前失败」，不触发向 Browser 的可用性回退）。
+    var isCLISourceConfigured: Bool { codexCLIEnabled && codexCLIDetected }
+
+    /// 检测到 CLI 凭据但用户尚未启用 —— Auth 页展示 opt-in 行的唯一条件
+    var isCodexCLIOptInPending: Bool { codexCLIDetected && !codexCLIEnabled }
 
     /// Browser 来源是否已配置
     var isBrowserSourceConfigured: Bool { !codexSessionToken.isEmpty }
@@ -562,9 +583,8 @@ class UserSettings: ObservableObject {
     /// - Important: 只读（D10）。这里只是读取并解析文件，绝不写回 `~/.codex/`，也绝不发起网络请求。
     @discardableResult
     func refreshCodexCLIState() -> Bool {
-        let wasDetected = codexCLIDetected
+        let wasConfigured = isCLISourceConfigured
         let previousLabel = codexCLIAccountLabel
-        let wasValidCredentials = hasValidCodexCredentials
 
         do {
             let auth = try CodexCLIAuthReader.read()
@@ -611,15 +631,30 @@ class UserSettings: ObservableObject {
 
         Logger.api.debug("Codex 当前生效来源: \(String(describing: self.effectiveCodexSource), privacy: .public)")
 
-        if !wasValidCredentials && hasValidCodexCredentials {
-            ensureDefaultCodexDisplayTypesForCustomMode()
-        }
-
-        let changed = (wasDetected != codexCLIDetected) || (previousLabel != codexCLIAccountLabel)
+        // 未启用 CLI 之前，这次探测对外不产生任何可观察后果：不发通知、不改显示偏好。
+        // 显示偏好的默认补齐只发生在显式 opt-in（`setCodexCLIEnabled(true)`）或新增 Browser 账户时。
+        let changed = (wasConfigured != isCLISourceConfigured)
+            || (isCLISourceConfigured && previousLabel != codexCLIAccountLabel)
         if changed {
             postAccountChanged(provider: .codex)
         }
         return changed
+    }
+
+    /// 显式启用 / 关闭 Codex CLI 来源（一次性 opt-in，来自 Auth 页的用户点击）
+    /// - Important: 只有这里（以及新增 Browser 账户）才允许补齐 Codex 显示项；
+    ///   后台探测永远不改用户已持久化的 `customDisplayTypes`。
+    func setCodexCLIEnabled(_ enabled: Bool) {
+        guard codexCLIEnabled != enabled else { return }
+        codexCLIEnabled = enabled
+        if enabled {
+            // 重新读一次凭据，让状态行立刻显示邮箱 / 计划类型，而不是等下一个刷新周期
+            refreshCodexCLIState()
+            if hasValidCodexCredentials {
+                ensureDefaultCodexDisplayTypesForCustomMode()
+            }
+        }
+        Logger.settings.notice("Codex CLI 来源已\(enabled ? "启用" : "关闭", privacy: .public)")
     }
 
     /// 从 Browser 侧 accessToken 中解析 `chatgpt_account_id` claim 并发布（D12）
@@ -1038,6 +1073,14 @@ class UserSettings: ObservableObject {
         } else {
             self.codexSource = .cli
         }
+
+        // 加载 Codex CLI 显式启用标记，默认 false（未 opt-in 前不使用 CLI 凭据）
+        #if DEBUG
+        let codexCLIEnabledKey = "DEBUG_codexCLIEnabled"
+        #else
+        let codexCLIEnabledKey = "codexCLIEnabled"
+        #endif
+        self.codexCLIEnabled = defaults.bool(forKey: codexCLIEnabledKey)
 
         // MARK: - 旧版迁移（v1.x → v2.0.0，保留向后兼容）
 

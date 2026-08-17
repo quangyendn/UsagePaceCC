@@ -140,6 +140,12 @@ enum L {
         static var codexRescan: String { localized("settings.auth.codex_rescan") }
         static var codexSourceActive: String { localized("settings.auth.codex_source_active") }
         static var codexSourceFallback: String { localized("settings.auth.codex_source_fallback") }
+
+        // Codex CLI explicit opt-in (detection alone must not activate the CLI source)
+        static var codexCliOptInTitle: String { localized("settings.auth.codex_cli_opt_in_title") }
+        static var codexCliOptInHint: String { localized("settings.auth.codex_cli_opt_in_hint") }
+        static var codexCliEnable: String { localized("settings.auth.codex_cli_enable") }
+        static var codexCliDisable: String { localized("settings.auth.codex_cli_disable") }
     }
     
     // MARK: - Settings About

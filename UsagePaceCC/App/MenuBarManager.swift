@@ -270,6 +270,24 @@ class MenuBarManager: ObservableObject {
                 self.ensureRefreshingIfCredentialed()
             }
             .store(in: &cancellables)
+
+        // 监听 Codex CLI 的显式 opt-in 开关：启用后立即拉取，关闭后立即清空 Codex 状态并重绘图标，
+        // 都不必等下一个刷新周期。
+        // - Note: `@Published` 在 willSet 阶段发布，此时属性尚未写入；`receive(on:)` 把回调推到
+        //   下一个 main runloop，保证 `effectiveCodexSource` 读到的是新值。
+        settings.$codexCLIEnabled
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                guard let self = self else { return }
+                Logger.menuBar.notice("Codex CLI 来源开关变更为 \(enabled, privacy: .public)，立即刷新")
+                self.ui.clearIconCache()
+                self.dataManager.handleCodexSourceChanged()
+                self.ensureRefreshingIfCredentialed()
+                self.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Popover Management
