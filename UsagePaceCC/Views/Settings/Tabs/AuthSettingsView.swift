@@ -98,7 +98,7 @@ struct AuthSettingsView: View {
     // MARK: - Account List View
 
     private var accountListView: some View {
-        let hasCodex = !settings.codexAccounts.isEmpty
+        let hasCodex = settings.hasAnyCodexSource
         let hasBothProviders = !settings.accounts.isEmpty && hasCodex
 
         return SettingCard(
@@ -108,7 +108,7 @@ struct AuthSettingsView: View {
             hint: ""
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                if settings.accounts.isEmpty && settings.codexAccounts.isEmpty {
+                if settings.accounts.isEmpty && !settings.hasAnyCodexSource {
                     // 无账户时的提示
                     VStack(spacing: 12) {
                         Image(systemName: "person.crop.circle.badge.plus")

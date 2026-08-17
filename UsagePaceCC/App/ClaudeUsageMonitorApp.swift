@@ -53,6 +53,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menuBarManager = MenuBarManager()
 
+        // 探测 Codex CLI 凭据文件（只读，见 D10），使仅配置了 CLI 的用户不会被误判为未登录
+        settings.refreshCodexCLIState()
+
         if settings.isFirstLaunch || !settings.hasAnyValidCredentials {
             showWelcomeWindow()
         } else {
