@@ -1,9 +1,8 @@
 name: Upstream Watch
 
 on:
-  schedule:
-    # Every Monday at 08:00 UTC
-    - cron: "0 8 * * 1"
+  # Manual-only by design: occasional checks via `gh workflow run upstream-watch.yml`.
+  # See docs/UPSTREAM_SYNC.md for the on-demand cadence and cherry-pick recipe.
   workflow_dispatch: {}
 
 permissions:

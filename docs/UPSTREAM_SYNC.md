@@ -1,8 +1,14 @@
 # Upstream Sync — Procedure & Reference
 
-**Fork:** `quangyendn/Usage4Claude`
+**Fork:** `quangyendn/UsagePaceCC`
 **Upstream:** `f-is-h/Usage4Claude`
-**Last updated:** 2026-06-21
+**Last updated:** 2026-08-17
+
+`quangyendn/UsagePaceCC` is a standalone repository (detached from the GitHub fork
+network in Phase 05 of the `full-brand-independence` plan). "Fork" below is used
+loosely, in the git-history sense: this repo's history originates from
+`f-is-h/Usage4Claude` and still pulls occasional fixes from it via cherry-pick, even
+though GitHub no longer tracks a fork relationship between the two.
 
 ---
 
@@ -13,7 +19,7 @@ upstream/main  ──────●──●──●──●──●──�
                       \           \
 upstream-mirror  ──────●──●──●──●──●──────────────►  (ff-only mirror, never commit here)
                                      \
-main  ────────────────────────────────●──●──●──►  (fork rebrand; diverges here)
+main (UsagePaceCC)  ───────────────────●──●──●──►  (rebrand line; diverges here)
                                           |
                               upstream-sync/YYYY-MM-DD  ──► (ephemeral review branch)
                               (created by CI, deleted after merge/close)
@@ -31,83 +37,68 @@ main  ────────────────────────�
 
 ---
 
-## One-Time Setup (User Runs These)
+## Setup (already completed)
 
-Run these commands once to bootstrap the `upstream-mirror` branch and GitHub labels.
+The one-time bootstrap below was performed during the initial fork setup and again
+verified after the Phase 05 rename/detach. It does not need to be re-run; this section
+is now a **verification checklist**, not an instruction list.
 
-### 1. Ensure remotes are configured
+### 1. Remotes
 
 ```bash
 git remote -v
 # Expected:
-#   origin   git@github.com:quangyendn/Usage4Claude.git (fetch)
+#   origin   git@github.com:quangyendn/UsagePaceCC.git (fetch)
 #   upstream https://github.com/f-is-h/Usage4Claude.git (fetch)
 
 # If upstream is missing:
 git remote add upstream https://github.com/f-is-h/Usage4Claude.git
 ```
 
-### 2. Create and push the upstream-mirror branch
+### 2. `upstream-mirror` branch
 
-```bash
-git fetch upstream
-git checkout -b upstream-mirror upstream/main
-git push -u origin upstream-mirror
-
-# Return to your working branch
-git checkout main   # or feat/linear-graph if active
-```
-
-Verify:
+Already exists on `origin`. Verify:
 
 ```bash
 git ls-remote origin upstream-mirror
 # Should print a SHA and refs/heads/upstream-mirror
 ```
 
-### 3. Create GitHub labels
+### 3. GitHub labels
 
-These labels must exist before the first workflow run; otherwise the workflow step that applies them will fail (the PR is still created, but unlabeled).
+`security` and `upstream-sync` already existed; `dependencies` was created in Phase 06.
+All three are confirmed present:
 
 ```bash
-gh label create security      --color d73a4a --description "Security or vulnerability fix" --repo quangyendn/Usage4Claude
-gh label create upstream-sync --color 0075ca --description "Automated upstream sync PR"   --repo quangyendn/Usage4Claude
-gh label create dependencies  --color 0075ca --description "Dependency updates"            --repo quangyendn/Usage4Claude
+gh label list --repo quangyendn/UsagePaceCC
+# security, upstream-sync, dependencies should all be listed
+```
+
+If any label is ever missing (e.g. a fresh clone under a different repo), recreate it:
+
+```bash
+gh label create security      --color d73a4a --description "Security or vulnerability fix" --repo quangyendn/UsagePaceCC
+gh label create upstream-sync --color 0075ca --description "Automated upstream sync PR"   --repo quangyendn/UsagePaceCC
+gh label create dependencies  --color 0075ca --description "Dependency updates"            --repo quangyendn/UsagePaceCC
 # Ignore "already exists" errors — safe to re-run
 ```
 
-### 4. Enable Dependabot and security features in GitHub UI
+### 4. Dependabot and security features
 
-Go to **Settings > Code security and analysis** on `quangyendn/Usage4Claude` and enable:
+Enabled under **Settings > Code security and analysis** on `quangyendn/UsagePaceCC`:
 
 - [x] Dependency graph
 - [x] Dependabot alerts
 - [x] Dependabot security updates
 
-Dependabot is configured via `.github/dependabot.yml` (already committed). It monitors GitHub Actions pinned versions weekly.
-
-### 5. First workflow dry-run (manual)
-
-After the branch and labels are created:
-
-```bash
-gh workflow run upstream-watch.yml --repo quangyendn/Usage4Claude
-```
-
-Then watch the run:
-
-```bash
-gh run list --workflow=upstream-watch.yml --repo quangyendn/Usage4Claude
-gh run view <run-id> --repo quangyendn/Usage4Claude
-```
-
-Expected behavior on first run after `f3446b9` merge: **zero new commits** (no-op exit). If upstream has moved ahead since then, a draft PR will be opened.
+Dependabot is configured via `.github/dependabot.yml` (already committed). It monitors
+GitHub Actions pinned versions weekly and labels PRs `dependencies`.
 
 ---
 
 ## Recurring Manual Cherry-Pick Recipe
 
-Use these commands whenever you want to manually sync without waiting for the weekly workflow.
+Use these commands whenever you want to manually sync without dispatching the CI workflow.
 
 ### Step 1 — Update the mirror
 
@@ -177,11 +168,18 @@ This tag does NOT reflect the cherry-picked commit on `main` (SHA changes after 
 
 ---
 
-## Automated Workflow: upstream-watch.yml
+## On-Demand Upstream Check: upstream-watch.yml
 
 **File:** `.github/workflows/upstream-watch.yml`
 
-**Trigger:** Every Monday 08:00 UTC + `workflow_dispatch` (manual).
+**Trigger:** `workflow_dispatch` only. **There is no schedule and nothing will remind
+you to run this.** Dispatch it manually whenever you feel like checking upstream;
+every 1–3 months is a reasonable cadence, but nothing enforces it.
+
+```bash
+gh workflow run upstream-watch.yml --repo quangyendn/UsagePaceCC
+gh run list --workflow=upstream-watch.yml --repo quangyendn/UsagePaceCC
+```
 
 **What it does:**
 
@@ -200,15 +198,16 @@ This tag does NOT reflect the cherry-picked commit on `main` (SHA changes after 
 
 **Permissions used:** `contents: write` (push mirror), `issues: write`, `pull-requests: write`. Only `GITHUB_TOKEN` — no PAT required.
 
-### Customizing the schedule
+**Why manual-only:** the fork now diverges heavily from upstream (renamed source tree,
+Codex provider support, full rebrand). A weekly cron produced draft-PR churn on a
+project that rarely applies upstream diffs cleanly anymore. Removing `schedule:` also
+removes GitHub's 60-day inactivity auto-disable behavior for scheduled workflows — one
+less silent failure mode to worry about.
 
-Edit the `cron` line in `.github/workflows/upstream-watch.yml`:
-
-```yaml
-on:
-  schedule:
-    - cron: "0 8 * * 1"   # Monday 08:00 UTC — change as needed
-```
+**Trade-off, stated plainly:** upstream security fixes may go unnoticed for months.
+This is an accepted, deliberate trade-off (decision V3/V4 of the
+`full-brand-independence` plan). Dependabot still covers GitHub Actions dependency
+updates automatically regardless of this workflow's cadence.
 
 ### Changing upstream branch name
 
@@ -218,6 +217,55 @@ If `f-is-h/Usage4Claude` renames its default branch, update the env var:
 env:
   UPSTREAM_BRANCH: main   # change to new branch name
 ```
+
+---
+
+## Path renames since the fork diverged
+
+Phase 03 of the `full-brand-independence` plan renamed the Xcode project, target,
+schemes, and source directory. Any upstream commit touching these paths will conflict
+on path, not content, unless you route around the rename:
+
+| Upstream path | Fork path |
+|---|---|
+| `Usage4Claude/…` | `UsagePaceCC/…` |
+| `Usage4Claude.xcodeproj` | `UsagePaceCC.xcodeproj` |
+| `Usage4Claude*.xcscheme` | `UsagePaceCC*.xcscheme` |
+
+**Required recipe — always pass `-X find-renames` to cherry-pick:**
+
+```bash
+git cherry-pick -x -X find-renames <sha>
+
+# if it still conflicts on path:
+git format-patch -1 <sha> --stdout \
+  | sed 's|a/Usage4Claude/|a/UsagePaceCC/|g; s|b/Usage4Claude/|b/UsagePaceCC/|g' \
+  | git apply --3way
+```
+
+**Verified during Phase 03 (step 8 dry-run):** `git cherry-pick -X find-renames`
+correctly routed an upstream change from the old `Usage4Claude/` paths onto the
+renamed `UsagePaceCC/` tree without manual intervention. The only conflict that
+surfaced during that dry-run was a genuine content divergence (a `User-Agent` string
+literal that differs between the fork and upstream) — **not** a path-routing failure.
+This confirms `-X find-renames` is sufficient for the common case; the `format-patch |
+sed | git apply --3way` fallback above is for the rarer case where git's rename
+detection itself fails to match (e.g., heavily rewritten files).
+
+## Divergence reality
+
+The fork is no longer a thin rebrand of upstream. It carries:
+
+- **Codex provider support** — a feature not present upstream.
+- **Full rebranding** — product name, bundle id, Xcode project/target/scheme names,
+  source directory (`UsagePaceCC/` vs. `Usage4Claude/`), UI strings, icon.
+- **A renamed source tree** — see the path-rename table above.
+
+Upstream fixes touching branding, the renamed source tree, or provider-selection logic
+will rarely apply cleanly via cherry-pick. When a cherry-pick fights you on a small
+fix, it is usually faster and safer to **re-implement the fix by hand** in the fork's
+current code than to fight the conflict resolution. Reserve the merge-scratch strategy
+below for large, unavoidable upstream refactors.
 
 ---
 
@@ -235,7 +283,10 @@ env:
 
 **When to prefer merge:** If upstream ships a large security refactor across many interrelated files where individual cherry-picks are impractical, merge into a scratch branch (`upstream-merge-scratch`), resolve conflicts there, then squash-merge into `main`.
 
-**Cadence recommendation:** Run sync at least every 2-3 weeks. Letting `upstream-mirror` drift more than a month increases conflict surface significantly.
+**Cadence recommendation:** Since Phase 06, `upstream-watch.yml` is `workflow_dispatch`-only
+— there is no schedule. Dispatch it whenever you feel like checking; every 1–3 months is
+fine. The longer you wait, the larger the conflict surface, but that is an accepted
+trade-off (see "On-Demand Upstream Check" above).
 
 ---
 
@@ -267,7 +318,7 @@ This prints the second parent (the upstream HEAD at merge time).
 
 ### "fatal: 'upstream-mirror' is not a commit" on first workflow run
 
-The `upstream-mirror` branch does not exist yet. Complete the one-time setup in the section above before running the workflow.
+The `upstream-mirror` branch does not exist yet. Re-run the bootstrap in the "Setup (already completed)" section above.
 
 ### gh pr create fails: "No commits between main and upstream-sync/..."
 
