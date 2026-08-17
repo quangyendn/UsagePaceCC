@@ -40,7 +40,13 @@ final class CodexBrowserUsageSource: CodexUsageSource {
                 completion(.failure(error))
 
             case .success(let accessToken):
-                self.fetchWhamUsage(session: session, accessToken: accessToken, completion: completion)
+                self.fetchWhamUsage(session: session, accessToken: accessToken) { usageResult in
+                    if case .success = usageResult {
+                        // D12：仅在一次用量请求成功后解析并发布 account id，纯本地解析，不额外发起请求
+                        self.settings.updateCodexBrowserChatGPTAccountId(fromAccessToken: accessToken)
+                    }
+                    completion(usageResult)
+                }
             }
         }
     }

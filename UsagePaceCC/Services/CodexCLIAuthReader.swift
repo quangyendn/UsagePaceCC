@@ -191,7 +191,9 @@ nonisolated enum CodexCLIAuthReader {
 
     /// 解码 JWT 的 payload 段（base64url，仅用 Foundation，不引入第三方 JWT 库）
     /// - Note: 解码失败一律返回 nil，不抛出错误（`access_token` 缺失是唯一必须抛出的情形）
-    private static func decodeJWTPayload(_ jwt: String) -> [String: Any]? {
+    /// - Important: internal（非 private），供 `CodexBrowserUsageSource` 复用同一套 base64url 解码逻辑（D12），
+    ///   避免在两处重复实现
+    static func decodeJWTPayload(_ jwt: String) -> [String: Any]? {
         let segments = jwt.split(separator: ".")
         guard segments.count >= 2 else { return nil }
 

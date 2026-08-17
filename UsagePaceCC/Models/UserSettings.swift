@@ -508,6 +508,11 @@ class UserSettings: ObservableObject {
     /// Codex CLI 侧的订阅计划类型
     @Published private(set) var codexCLIPlanType: String?
 
+    /// Codex Browser 侧的 ChatGPT account id —— D12 账户比对的关键字段
+    /// - Note: 由 `CodexBrowserUsageSource` 在一次用量请求成功后解析 `accessToken` 的
+    ///   `https://api.openai.com/auth` claim 并写入；解析失败或尚未成功请求过时保持 nil
+    @Published private(set) var codexBrowserChatGPTAccountId: String?
+
     /// 是否存在任意一个 Codex 凭据来源（CLI 或 Browser）
     /// - Important: 只用于"是否存在来源"的判断（existence gate）。凡是需要遍历真实账户列表
     ///   或对 `codexAccounts` 做增删的地方，一律保持读 `codexAccounts` 本身，不要替换成这个属性（D11）。
@@ -611,6 +616,14 @@ class UserSettings: ObservableObject {
             postAccountChanged(provider: .codex)
         }
         return changed
+    }
+
+    /// 从 Browser 侧 accessToken 中解析 `chatgpt_account_id` claim 并发布（D12）
+    /// - Important: 纯本地解析（复用 `CodexCLIAuthReader.decodeJWTPayload`），不发起任何网络请求；
+    ///   claim 缺失或解析失败时静默保持 nil —— 与 D12 的"未知 id 保持沉默"规则一致
+    func updateCodexBrowserChatGPTAccountId(fromAccessToken accessToken: String) {
+        let authClaim = CodexCLIAuthReader.decodeJWTPayload(accessToken)?["https://api.openai.com/auth"] as? [String: Any]
+        codexBrowserChatGPTAccountId = authClaim?["chatgpt_account_id"] as? String
     }
 
     // MARK: - 非敏感设置（存储在UserDefaults中）

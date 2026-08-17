@@ -353,8 +353,6 @@ enum L {
         static var codexCLIInvalidAuthTab: String { localized("error.codex_cli_invalid_auth_tab") }
         static var codexBrowserExpiredPopover: String { localized("error.codex_browser_expired_popover") }
         static var codexBrowserExpiredAuthTab: String { localized("error.codex_browser_expired_auth_tab") }
-        static var codexCliReauthRequired: String { localized("error.codex_cli_reauth_required") }
-        static var codexBrowserReauthRequired: String { localized("error.codex_browser_reauth_required") }
     }
 
     // MARK: - Diagnostics
