@@ -88,22 +88,16 @@ struct UsageDetailView: View {
         (usageData != nil || UserSettings.shared.hasValidCredentials) ? .claude : .codex
     }
 
-    /// 单列弹出窗口的 legend 类型列表（P06 D1/D5′）：
-    /// - Linear：Claude 行随后是 Codex 行（`getActiveDisplayTypes` 已经按此顺序返回）。
-    ///   若 Codex 处于报错态，Codex 的 legend 行整体被 `codexErrorRow` 顶替，因此这里
-    ///   过滤掉 Codex 类型，避免同时展示「行」和「错误行」。
-    /// - Circular：完全不含 Codex（D5′）。
+    /// 单列弹出窗口的 legend 类型列表（P06 D1/D5′）。
+    /// 规则全部收在 `PopoverLayout.legendTypes` 里，供本视图和高度计算共用——两处各写一份
+    /// 正是「布局按 3 行留高、视图只画 2 行」那类永久空白的来源。
     private var legendTypes: [LimitType] {
-        let combined = UserSettings.shared.getActiveDisplayTypes(usageData: usageData, codexUsageData: codexUsageData)
-        switch UserSettings.shared.graphDisplayType {
-        case .circular:
-            return combined.filter { $0.provider == .claude }
-        case .linear:
-            if codexErrorMessage != nil {
-                return combined.filter { $0.provider == .claude }
-            }
-            return combined
-        }
+        PopoverLayout.legendTypes(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            codexErrorMessage: codexErrorMessage,
+            graphDisplayType: UserSettings.shared.graphDisplayType
+        )
     }
 
     private var contentSpacing: CGFloat {

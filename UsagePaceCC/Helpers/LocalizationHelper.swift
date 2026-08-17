@@ -424,7 +424,6 @@ enum L {
         static var codexPrimary: String { localized("codex_primary_limit") }
         static var codexSecondary: String { localized("codex_secondary_limit") }
         static var codexExtraUsage: String { localized("codex_extra_usage") }
-        static var codexGenericLimit: String { localized("codex_generic_limit") }
 
         /// Window-derived Codex legend label (P05). Never trust `.codexPrimary`'s hardcoded
         /// "Codex 5-Hour Limit" for a window whose actual length is unknown — this account has been
@@ -584,18 +583,28 @@ enum L {
     /// 本地化字符串辅助方法
     /// 根据用户设置的语言返回对应的本地化字符串
     /// - Parameter key: 本地化字符串的键名
-    /// - Returns: 对应语言的本地化字符串
+    /// - Returns: 对应语言的本地化字符串；该语言尚未回填时回退到 en.lproj
     private static func localized(_ key: String) -> String {
         // 从UserSettings获取用户选择的语言
         let language = UserSettings.shared.language.rawValue
-        
+
         // 获取对应语言的bundle
         guard let path = Bundle.main.path(forResource: language, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
             // 如果找不到对应语言，使用系统默认
             return NSLocalizedString(key, comment: "")
         }
-        
-        return NSLocalizedString(key, bundle: bundle, comment: "")
+
+        let value = NSLocalizedString(key, bundle: bundle, comment: "")
+        guard value == key, language != "en" else { return value }
+
+        // 缺失时 NSLocalizedString 原样返回 key。新增字符串本轮只有 en（fr/ja/ko/zh 回填是
+        // 已记录的延后任务），若直接返回就会把 "settings.auth.codex_source_title" 这类 key
+        // 当作 UI 文案显示给非英文用户。回退到 en.lproj 再取一次。
+        guard let englishPath = Bundle.main.path(forResource: "en", ofType: "lproj"),
+              let englishBundle = Bundle(path: englishPath) else {
+            return value
+        }
+        return NSLocalizedString(key, bundle: englishBundle, comment: "")
     }
 }
