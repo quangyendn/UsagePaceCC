@@ -493,10 +493,17 @@ class UserSettings: ObservableObject {
         }
     }
 
-    /// Codex CLI 是否被检测到（凭据文件可读且能解析出 access_token；过期的 token 依然算检测到 —— D13）
+    /// Codex CLI 是否被检测到（= 凭据文件存在）。
+    /// - Important: D13 的判定标准是"文件在不在"，不是"文件能不能用"。过期、被沙盒拒绝、
+    ///   无法解析、缺少 access_token —— 这四种都属于「已配置但当前失败」，一律保持 `true`，
+    ///   由各自的错误行告诉用户怎么修。只有 `.notInstalled`（文件确实不存在）才是未配置。
+    ///   否则 `effectiveCodexSource` 会静默回退到 Browser 来源，而那可能是**另一个** ChatGPT
+    ///   账户 —— 正是 D12/D13 要防止的危险。
     @Published private(set) var codexCLIDetected: Bool = false
 
-    /// Codex CLI 账户展示标签（邮箱优先，其次 account_id）
+    /// Codex CLI 账户展示标签（仅邮箱）
+    /// - Important: 绝不回退到 `account_id`。原始账户 id 是标识符，不进 UI。
+    ///   邮箱缺失时保持 nil，展示层退回通用的"已登录"文案。
     @Published private(set) var codexCLIAccountLabel: String?
 
     /// 最近一次读取 Codex CLI 凭据时遇到的错误，用于 P07 展示具体原因
@@ -518,7 +525,7 @@ class UserSettings: ObservableObject {
     ///   或对 `codexAccounts` 做增删的地方，一律保持读 `codexAccounts` 本身，不要替换成这个属性（D11）。
     var hasAnyCodexSource: Bool { codexCLIDetected || !codexAccounts.isEmpty }
 
-    /// CLI 来源是否已配置（过期的 token 依然算已配置，不触发向 Browser 的可用性回退 —— D13）
+    /// CLI 来源是否已配置（凭据文件存在即算已配置；过期/不可读/无法解析都不触发向 Browser 的可用性回退 —— D13）
     var isCLISourceConfigured: Bool { codexCLIDetected }
 
     /// Browser 来源是否已配置
@@ -562,42 +569,39 @@ class UserSettings: ObservableObject {
         do {
             let auth = try CodexCLIAuthReader.read()
             codexCLIDetected = true
-            codexCLIAccountLabel = auth.email ?? auth.accountId
+            codexCLIAccountLabel = auth.email
             codexCLIChatGPTAccountId = auth.chatgptAccountId
             codexCLIPlanType = auth.planType
             codexCLIError = nil
             Logger.api.debug("Codex CLI 已检测到，凭据有效")
         } catch let error as CodexCLIAuthError {
             codexCLIError = error
+            // 失败时派生信息一律清空；是否"已配置"只由下面的 switch 决定。
+            codexCLIAccountLabel = nil
+            codexCLIChatGPTAccountId = nil
+            codexCLIPlanType = nil
             switch error {
             case .tokenExpired:
                 // D13：过期的 token 依然算"已配置"，不能因为过期就当作未安装
                 codexCLIDetected = true
-                codexCLIAccountLabel = nil
-                codexCLIChatGPTAccountId = nil
-                codexCLIPlanType = nil
                 Logger.api.debug("Codex CLI 已检测到，但 access_token 已过期")
             case .notInstalled:
+                // 唯一的"未配置"：文件确实不存在
                 codexCLIDetected = false
-                codexCLIAccountLabel = nil
-                codexCLIChatGPTAccountId = nil
-                codexCLIPlanType = nil
                 Logger.api.debug("Codex CLI 未检测到（凭据文件不存在）")
             case .sandboxDenied:
-                codexCLIDetected = false
-                codexCLIAccountLabel = nil
-                codexCLIChatGPTAccountId = nil
-                codexCLIPlanType = nil
+                // 文件在，只是读不到 —— 已配置但失败（D13），不回退到 Browser 来源
+                codexCLIDetected = true
                 Logger.api.debug("Codex CLI 凭据文件读取被沙盒拒绝")
             case .malformed, .noAccessToken:
-                codexCLIDetected = false
-                codexCLIAccountLabel = nil
-                codexCLIChatGPTAccountId = nil
-                codexCLIPlanType = nil
+                // 文件在，只是内容用不了 —— 同上，交给各自的错误行，不静默换账户
+                codexCLIDetected = true
                 Logger.api.debug("Codex CLI 凭据文件存在但无法解析")
             }
         } catch {
-            codexCLIDetected = false
+            // `CodexCLIAuthReader.read()` 只抛 `CodexCLIAuthError`，这里理论上不可达；
+            // 万一到达，用一次廉价的存在性探测决定是否算已配置，不臆断为"未安装"。
+            codexCLIDetected = CodexCLIAuthReader.isPresent
             codexCLIAccountLabel = nil
             codexCLIChatGPTAccountId = nil
             codexCLIPlanType = nil

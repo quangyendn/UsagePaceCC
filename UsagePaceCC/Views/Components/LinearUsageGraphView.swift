@@ -283,15 +283,18 @@ struct LinearUsageGraphView: View {
         if let windowSeconds, windowSeconds > 0 {
             totalWindow = windowSeconds
         } else {
-            // Fallback only for data with no known window length (all Claude points today).
-            // Codex points always carry `windowSeconds` from the wire (P03); this table must never
-            // become the source of truth for Codex again — that hardcoded the wrong 5h window before.
+            // Fallback only for Claude, whose windows really are a fixed 5h/7d. Codex windows are
+            // data-driven: `limit_window_seconds` is optional on the wire, and guessing 5h for a
+            // window that is actually 7 days pins the dot to the far right. `resolve(_:)` already
+            // drops any Codex point with a known `resetsAt` but an unknown window, so the Codex
+            // cases below are unreachable — they return 0 rather than invent a window length.
             switch limitType {
-            case .fiveHour, .codexPrimary:
+            case .fiveHour:
                 totalWindow = 5 * 3600  // 5 hours in seconds
-            case .sevenDay, .opusWeekly, .sonnetWeekly, .extraUsage,
-                 .codexSecondary, .codexExtraUsage:
+            case .sevenDay, .opusWeekly, .sonnetWeekly, .extraUsage:
                 totalWindow = 7 * 24 * 3600  // 7 days in seconds
+            case .codexPrimary, .codexSecondary, .codexExtraUsage:
+                return 0
             }
             Logger.api.debug("LinearUsageGraphView: falling back to static window table for \(limitType.rawValue, privacy: .public) (windowSeconds was nil)")
         }
@@ -302,6 +305,15 @@ struct LinearUsageGraphView: View {
         // Clamp to 0-1 range
         let ratio = elapsedTime / totalWindow
         return CGFloat(max(0, min(1, ratio)))
+    }
+
+    /// Whether a Codex window can be placed on the X axis at all.
+    /// `limit_window_seconds` is optional on the wire; without it the elapsed-time ratio is unknowable
+    /// for a window that has a reset time, and the old static 5h guess put the dot at the far right of
+    /// a 7-day window. Dropping the point is honest; a wrong point is not. A window with no `resetsAt`
+    /// is still plottable — it sits at x=0 by the same convention as `.extraUsage`, no window needed.
+    private func isPlottable(_ limit: CodexUsageData.LimitData) -> Bool {
+        limit.resetsAt == nil || (limit.windowSeconds ?? 0) > 0
     }
 
     /// Resolve a `LimitType` into a provider-agnostic point, pulling from `usageData` for the 5 Claude
@@ -354,7 +366,7 @@ struct LinearUsageGraphView: View {
                 color: Color(UsageColorScheme.extraUsageColor(percentage))
             )
         case .codexPrimary:
-            guard let limit = codexUsageData?.primary else { return nil }
+            guard let limit = codexUsageData?.primary, isPlottable(limit) else { return nil }
             return ResolvedPoint(
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
@@ -364,7 +376,7 @@ struct LinearUsageGraphView: View {
         case .codexSecondary:
             // secondary_window is null on this account today (P01/P03 finding); guard makes that a
             // clean "no point drawn" rather than a fabricated dot at x=0,y=0.
-            guard let limit = codexUsageData?.secondary else { return nil }
+            guard let limit = codexUsageData?.secondary, isPlottable(limit) else { return nil }
             return ResolvedPoint(
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,

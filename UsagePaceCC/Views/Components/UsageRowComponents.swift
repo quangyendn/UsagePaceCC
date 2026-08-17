@@ -109,16 +109,24 @@ struct UnifiedLimitRow: View {
 
     private var limitName: String {
         switch type {
-        case .fiveHour, .codexPrimary:
+        case .fiveHour:
             return L.DetailRow.fiveHour
-        case .sevenDay, .codexSecondary:
+        case .sevenDay:
             return L.DetailRow.sevenDay
+        // Codex 的窗口长度由 wire 决定，不能沿用 Claude 的 5h/7d 命名：本机 primary 窗口实测
+        // 是 7 天，写死 "5-Hour Limit" 会让 legend 和图上的点自相矛盾（见 plan.md Q4）。
+        case .codexPrimary:
+            return L.LimitTypes.codexWindowName(windowSeconds: codexData?.primary?.windowSeconds)
+        case .codexSecondary:
+            return L.LimitTypes.codexWindowName(windowSeconds: codexData?.secondary?.windowSeconds)
         case .opusWeekly:
             return L.DetailRow.opusWeekly
         case .sonnetWeekly:
             return L.DetailRow.sonnetWeekly
-        case .extraUsage, .codexExtraUsage:
+        case .extraUsage:
             return L.DetailRow.extraUsage
+        case .codexExtraUsage:
+            return L.LimitTypes.codexExtraUsage
         }
     }
 

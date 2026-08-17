@@ -168,6 +168,14 @@ extension UsageDetailView {
     /// - Circular + 有 Claude 数据：沿用既有的圆环视图（Claude-only 用户像素不变）。
     /// - Circular + Codex-only（D5′ 制造的空档）：绝不能空白，展示
     ///   `codexCircularUnsupportedView` 并提供切换到 Linear 的入口。
+    /// 点击图表触发的刷新动作。
+    /// Claude-only 时保持改动前的 `.refreshClaude`（独立的防抖计数 + `refreshingProvider = .claude`）；
+    /// 只有当图上真的有 Codex 内容（数据点或错误行）时才升级为全量 `.refresh`，否则点了图
+    /// 也刷不到 Codex 那半边。Circular 模式下 Codex 从不出现（D5′），恒为 `.refreshClaude`。
+    private var graphTapRefreshAction: MenuAction {
+        (codexUsageData != nil || codexErrorMessage != nil) ? .refresh : .refreshClaude
+    }
+
     @ViewBuilder
     func usageGraphArea() -> some View {
         switch UserSettings.shared.graphDisplayType {
@@ -185,7 +193,7 @@ extension UsageDetailView {
             .contentShape(Rectangle())
             .onTapGesture {
                 if refreshState.canRefresh && !refreshState.isRefreshing {
-                    onMenuAction?(.refresh)
+                    onMenuAction?(graphTapRefreshAction)
                 }
             }
         case .circular:
@@ -195,7 +203,7 @@ extension UsageDetailView {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if refreshState.canRefresh && !refreshState.isRefreshing {
-                            onMenuAction?(.refresh)
+                            onMenuAction?(.refreshClaude)
                         }
                     }
                     .onLongPressGesture(minimumDuration: 3.0) {
