@@ -144,6 +144,8 @@ enum L {
         // Codex CLI explicit opt-in (detection alone must not activate the CLI source)
         static var codexCliOptInTitle: String { localized("settings.auth.codex_cli_opt_in_title") }
         static var codexCliOptInHint: String { localized("settings.auth.codex_cli_opt_in_hint") }
+        static var codexCliEnabledMissing: String { localized("settings.auth.codex_cli_enabled_missing") }
+        static var codexCliAccountChanged: String { localized("settings.auth.codex_cli_account_changed") }
         static var codexCliEnable: String { localized("settings.auth.codex_cli_enable") }
         static var codexCliDisable: String { localized("settings.auth.codex_cli_disable") }
     }

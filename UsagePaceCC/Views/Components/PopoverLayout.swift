@@ -59,11 +59,28 @@ enum PopoverLayout {
         }
     }
 
+    /// 单个类型是否展开成两行 InfoRow（倒计时 + 重置时间）。
+    ///
+    /// - Important: 这是**视图和高度计算共用的第二个唯一来源**。仅"Claude 的 5 小时 / 7 天
+    ///   且对应数据确实存在"才展开；其余单类型（`.opusWeekly` / `.sonnetWeekly` /
+    ///   `.extraUsage`，或 payload 里缺了 `five_hour` 的 `.fiveHour`）走单行
+    ///   `UnifiedLimitRow`。之前这里按「单个 Claude 类型」一律算两行，而视图只在上述两种
+    ///   情况下才画 InfoRow —— 自定义模式下只勾选 Opus Weekly 时，布局留了两行、视图一行
+    ///   都不画，弹窗底部空出约 57pt。
+    static func expandsToTwoInfoRows(type: LimitType, usageData: UsageData?) -> Bool {
+        guard type.provider == .claude, let data = usageData else { return false }
+        switch type {
+        case .fiveHour: return data.fiveHour != nil
+        case .sevenDay: return data.sevenDay != nil
+        default: return false
+        }
+    }
+
     /// 计算单列弹出窗口中实际渲染的行数（legend 行 + Codex 错误行，二者互斥）。
     ///
     /// 行数规则与 `UsageDetailView.legendSection` 一一对应：
-    /// - 只有一个类型且属于 Claude：渲染两行 InfoRow（沿用改动前的行为），按 2 计。
-    /// - 只有一个类型且属于 Codex：渲染一行 `UnifiedLimitRow`，按 1 计（Codex 不做双行特例）。
+    /// - 只有一个类型且 `expandsToTwoInfoRows` 为真：渲染两行 InfoRow（沿用改动前的行为），按 2 计。
+    /// - 只有一个类型且不展开：渲染一行 `UnifiedLimitRow`，按 1 计。
     /// - 其余情况：行数 = 类型数。
     /// - `codexErrorRow` 固定占一行——这样 CLI token 每 ~10 天过期一次时，弹出窗口不会因为
     ///   「有数据 → 报错」的切换而跳动或改变高度。
@@ -82,7 +99,7 @@ enum PopoverLayout {
 
         var rows: Int
         if types.count == 1 {
-            rows = types[0].provider == .claude ? 2 : 1
+            rows = expandsToTwoInfoRows(type: types[0], usageData: usageData) ? 2 : 1
         } else {
             rows = types.count
         }

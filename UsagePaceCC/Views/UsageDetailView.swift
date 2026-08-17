@@ -246,8 +246,9 @@ struct UsageDetailView: View {
     }
 
     /// legend 区域：`legendTypes` 里 Claude 类型走 `data:`，Codex 类型走 `codexData:`。
-    /// 单一 Claude 类型时保留既有的双 InfoRow 特例（Codex 单行不做这个特例——见
-    /// phase-06 要求，Codex 出错时的展示已经由 `codexErrorRow` 承担）。
+    /// 单一类型时是否展开成双 InfoRow 由 `PopoverLayout.expandsToTwoInfoRows` 判定——
+    /// 高度计算用的是同一个判定，两边必须问同一个问题；不展开的单类型仍然渲染一行
+    /// `UnifiedLimitRow`，「选中的类型一行都不画」本身就是 bug。
     @ViewBuilder
     private var legendSection: some View {
         VStack(spacing: 8) {
@@ -271,21 +272,9 @@ struct UsageDetailView: View {
             } else if types.count == 1 {
                 let singleType = types[0]
 
-                if singleType.provider == .claude, let data = usageData {
-                    if singleType == .fiveHour, let fiveHour = data.fiveHour {
-                        VStack(spacing: 5) {
-                            InfoRow(
-                                icon: "clock.fill",
-                                title: L.Usage.fiveHourLimit,
-                                value: fiveHour.formattedResetsInHours
-                            )
-                            InfoRow(
-                                icon: "arrow.clockwise",
-                                title: L.Usage.resetTime,
-                                value: fiveHour.formattedResetTimeShort
-                            )
-                        }
-                    } else if singleType == .sevenDay, let sevenDay = data.sevenDay {
+                if PopoverLayout.expandsToTwoInfoRows(type: singleType, usageData: usageData),
+                   let data = usageData {
+                    if singleType == .sevenDay, let sevenDay = data.sevenDay {
                         VStack(spacing: 5) {
                             InfoRow(
                                 icon: "calendar",
@@ -300,7 +289,22 @@ struct UsageDetailView: View {
                                 tintColor: .purple
                             )
                         }
+                    } else if let fiveHour = data.fiveHour {
+                        VStack(spacing: 5) {
+                            InfoRow(
+                                icon: "clock.fill",
+                                title: L.Usage.fiveHourLimit,
+                                value: fiveHour.formattedResetsInHours
+                            )
+                            InfoRow(
+                                icon: "arrow.clockwise",
+                                title: L.Usage.resetTime,
+                                value: fiveHour.formattedResetTimeShort
+                            )
+                        }
                     }
+                } else if singleType.provider == .claude {
+                    UnifiedLimitRow(type: singleType, data: usageData, showRemainingMode: showRemainingMode)
                 } else {
                     UnifiedLimitRow(type: singleType, codexData: codexUsageData, showRemainingMode: showRemainingMode)
                 }

@@ -168,12 +168,22 @@ extension UsageDetailView {
     /// - Circular + 有 Claude 数据：沿用既有的圆环视图（Claude-only 用户像素不变）。
     /// - Circular + Codex-only（D5′ 制造的空档）：绝不能空白，展示
     ///   `codexCircularUnsupportedView` 并提供切换到 Linear 的入口。
-    /// 点击图表触发的刷新动作。
-    /// Claude-only 时保持改动前的 `.refreshClaude`（独立的防抖计数 + `refreshingProvider = .claude`）；
-    /// 只有当图上真的有 Codex 内容（数据点或错误行）时才升级为全量 `.refresh`，否则点了图
-    /// 也刷不到 Codex 那半边。Circular 模式下 Codex 从不出现（D5′），恒为 `.refreshClaude`。
+    /// 点击图表触发的刷新动作，按**已配置了哪些 Provider**决定，而不是按「哪边碰巧已经有数据」。
+    /// - 只有 Claude：`.refreshClaude`（`refreshingProvider = .claude`，只转 Claude 那半边的动画）。
+    /// - 只有 Codex：`.refreshCodex`。按数据判断的话，Codex-only 用户在首次响应到达之前
+    ///   点图会落到 `.refreshClaude`，而 `handleClaudeOnlyRefresh` 开头的
+    ///   `guard shouldFetchClaudeUsage` 直接返回 —— 点了完全没反应。
+    /// - 两边都有、或两边都没有（DEBUG 模拟数据）：`.refresh` 走全量。
+    /// - Note: 三者共用 `DataRefreshManager.lastManualRefreshTime` 这一个 10 秒防抖时间戳，
+    ///   不存在各自独立的防抖计数。
+    /// - Note: 仅 Linear 模式会用到；Circular 模式下 Codex 从不出现（D5′），那条路径写死 `.refreshClaude`。
     private var graphTapRefreshAction: MenuAction {
-        (codexUsageData != nil || codexErrorMessage != nil) ? .refresh : .refreshClaude
+        let settings = UserSettings.shared
+        let hasClaude = settings.hasValidCredentials
+        let hasCodex = settings.hasValidCodexCredentials
+        if hasClaude && !hasCodex { return .refreshClaude }
+        if hasCodex && !hasClaude { return .refreshCodex }
+        return .refresh
     }
 
     @ViewBuilder

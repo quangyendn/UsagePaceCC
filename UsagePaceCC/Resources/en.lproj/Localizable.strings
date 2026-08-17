@@ -106,6 +106,8 @@
 "settings.auth.codex_source_fallback" = "%@ is not available — using %@.";
 "settings.auth.codex_cli_opt_in_title" = "Codex CLI detected";
 "settings.auth.codex_cli_opt_in_hint" = "Enable to track Codex usage with your existing `codex login` session. Until you do, nothing is read or sent.";
+"settings.auth.codex_cli_enabled_missing" = "Enabled, but no CLI sign-in found right now";
+"settings.auth.codex_cli_account_changed" = "Codex CLI is now signed in to a different ChatGPT account than the one you enabled. Enable again to track it.";
 "settings.auth.codex_cli_enable" = "Enable";
 "settings.auth.codex_cli_disable" = "Disable";
 
