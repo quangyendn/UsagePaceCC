@@ -59,7 +59,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if settings.isFirstLaunch || !settings.hasAnyValidCredentials {
             showWelcomeWindow()
         } else {
-            menuBarManager.startRefreshing()
+            menuBarManager.ensureRefreshingIfCredentialed()
         }
 
         // 使用 Combine 订阅通知，自动管理生命周期
@@ -119,9 +119,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeWindow?.close()
         welcomeWindow = nil
 
-        if settings.hasAnyValidCredentials {
-            menuBarManager.startRefreshing()
-        }
+        menuBarManager.ensureRefreshingIfCredentialed()
     }
     
     /// 应用即将退出时调用

@@ -252,8 +252,22 @@ class MenuBarManager: ObservableObject {
                 self.ui.clearIconCache()
                 // 只刷新切换的 Provider，避免另一家的数据和通知状态被误清理
                 self.dataManager.handleAccountChanged(provider: provider)
+                // 凭据首次出现时（例如 codex login 首次被检测到）顺带幂等地启动定时刷新
+                self.ensureRefreshingIfCredentialed()
                 // 更新菜单栏图标
                 self.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+
+        // 监听 Codex 来源（CLI / Browser）切换，立即用新来源重新拉取，而不是等待下一个刷新周期（见 plan.md D9）
+        settings.$codexSource
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] source in
+                guard let self = self else { return }
+                Logger.menuBar.notice("Codex 来源已切换为 \(String(describing: source), privacy: .public)，立即重新拉取")
+                self.dataManager.handleCodexSourceChanged()
+                self.ensureRefreshingIfCredentialed()
             }
             .store(in: &cancellables)
     }
@@ -415,6 +429,12 @@ class MenuBarManager: ObservableObject {
     func startRefreshing() {
         dataManager.startRefreshing()
     }
+
+    /// 幂等地确保有凭据时定时刷新处于运行状态；若定时器已在运行则不重复启动（见 Phase 04）
+    func ensureRefreshingIfCredentialed() {
+        guard settings.hasAnyValidCredentials else { return }
+        dataManager.startRefreshingIfNeeded()
+    }
     
     // MARK: - Settings Window
     
@@ -497,11 +517,7 @@ class MenuBarManager: ObservableObject {
                 NSApp.setActivationPolicy(.accessory)
 
                 self?.settingsWindow = nil
-                if self?.settings.hasAnyValidCredentials == true
-                    && self?.usageData == nil
-                    && self?.codexUsageData == nil {
-                    self?.startRefreshing()
-                }
+                self?.ensureRefreshingIfCredentialed()
             }
 
             // 添加窗口获得焦点观察者 - 当设置窗口成为 key window 时关闭 popover

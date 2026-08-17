@@ -67,6 +67,10 @@ class DataRefreshManager: ObservableObject {
     private var refreshActivity: NSObjectProtocol?
     /// 系统唤醒观察者令牌
     private var wakeObserver: NSObjectProtocol?
+    /// 标记当前是否正处于 `fetchUsage()` 内部的 CLI 状态同步阶段
+    /// 用于抑制该同步触发的 `.accountChanged` 通知在 `handleAccountChanged` 中发起的重复 Codex 请求
+    /// （见 Phase 04：一个刷新周期只应产生一次 Codex 请求）
+    private var isSyncingCodexCLIState = false
 
     private var shouldFetchClaudeUsage: Bool {
         #if DEBUG
@@ -140,6 +144,13 @@ class DataRefreshManager: ObservableObject {
         errorMessage = nil
         codexErrorMessage = nil
         lastAPIFetchTime = Date()
+
+        // 每次刷新前先重新探测 Codex CLI 凭据文件（只读，见 D10），使 CLI 登录/登出
+        // 无需用户打开 Settings 即可在一个刷新周期内被感知（scout-01 候选 #1 修复的一部分）。
+        // `.accountChanged` 若因此触发，会在 handleAccountChanged 中被抑制以避免与本次请求重复。
+        isSyncingCodexCLIState = true
+        settings.refreshCodexCLIState()
+        isSyncingCodexCLIState = false
 
         let fetchClaude = shouldFetchClaudeUsage
         let fetchCodex = shouldFetchCodexUsage
@@ -296,6 +307,13 @@ class DataRefreshManager: ObservableObject {
             self?.objectWillChange.send()
         }
         #endif
+    }
+
+    /// 幂等启动数据刷新
+    /// 若 `mainRefresh` 定时器已在运行，则不重复启动/不产生额外的一次性 fetch（见 Phase 04）
+    func startRefreshingIfNeeded() {
+        guard !timerManager.isScheduled(TimerID.mainRefresh) else { return }
+        startRefreshing()
     }
 
     /// 停止数据刷新
@@ -573,6 +591,11 @@ class DataRefreshManager: ObservableObject {
 
         case .codex:
             clearCodexUsageState()
+            if isSyncingCodexCLIState {
+                // fetchUsage() 自身即将根据刚同步的 CLI 状态发起（或跳过）Codex 请求，
+                // 这里不重复发起，避免同一刷新周期产生两次 Codex 请求。
+                return
+            }
             if shouldFetchCodexUsage {
                 fetchCodexOnly()
             }
@@ -582,6 +605,14 @@ class DataRefreshManager: ObservableObject {
             clearCodexUsageState()
             NotificationManager.shared.resetAllNotificationStates()
             fetchUsage()
+        }
+    }
+
+    /// Codex 来源（CLI / Browser）切换后立即重新拉取，不经过手动刷新防抖（见 plan.md D9 / Phase 04）
+    func handleCodexSourceChanged() {
+        clearCodexUsageState()
+        if shouldFetchCodexUsage {
+            fetchCodexOnly()
         }
     }
 
