@@ -162,30 +162,55 @@ extension UsageDetailView {
 
     // MARK: - Graph View Selection
 
-    /// 根据用户设置选择圆形或线性图表
-    /// - Parameter data: 用量数据
-    /// - Returns: 对应类型的图表视图
+    /// 单列弹出窗口的图表区域选择（P06 架构图 「graph area」 节点）：
+    /// - Linear：同一张图同时承载 Claude + Codex 的点（P05, D1），`usageData` 可以为 nil
+    ///   （Codex-only 用户），`LinearUsageGraphView` 本身会渲染 loading/占位状态。
+    /// - Circular + 有 Claude 数据：沿用既有的圆环视图（Claude-only 用户像素不变）。
+    /// - Circular + Codex-only（D5′ 制造的空档）：绝不能空白，展示
+    ///   `codexCircularUnsupportedView` 并提供切换到 Linear 的入口。
     @ViewBuilder
-    func usageGraphView(data: UsageData) -> some View {
+    func usageGraphArea() -> some View {
         switch UserSettings.shared.graphDisplayType {
-        case .circular:
-            // D5′: circular mode renders no Codex element at all — Claude-only, unchanged.
-            circularGraphView(data: data)
         case .linear:
-            // Codex is plotted as extra dot(s) on this same graph (P05, D1). `activeDisplayTypes`
-            // (Claude-filtered, used by the legend below the graph) is intentionally left untouched;
-            // the graph alone widens to the combined list so Claude-only users see zero change
-            // (codexUsageData is nil for them and getActiveDisplayTypes returns the same Claude-only
-            // list it always has).
             LinearUsageGraphView(
-                usageData: data,
+                usageData: usageData,
                 codexUsageData: codexUsageData,
                 activeDisplayTypes: UserSettings.shared.getActiveDisplayTypes(
-                    usageData: data,
+                    usageData: usageData,
                     codexUsageData: codexUsageData
                 ),
                 isRefreshing: refreshState.isRefreshing
             )
+            .frame(height: 114)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if refreshState.canRefresh && !refreshState.isRefreshing {
+                    onMenuAction?(.refresh)
+                }
+            }
+        case .circular:
+            if let data = usageData {
+                circularGraphView(data: data)
+                    .frame(height: 114)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if refreshState.canRefresh && !refreshState.isRefreshing {
+                            onMenuAction?(.refresh)
+                        }
+                    }
+                    .onLongPressGesture(minimumDuration: 3.0) {
+                        // 长按圆环切换加载动画类型（仅圆形模式有效）
+                        let allTypes = LoadingAnimationType.allCases
+                        let currentIndex = allTypes.firstIndex(of: claudeAnimationType) ?? 0
+                        let nextIndex = (currentIndex + 1) % allTypes.count
+                        claudeAnimationType = allTypes[nextIndex]
+
+                        showAnimationHint(claudeAnimationType.name, provider: .claude)
+                    }
+            } else {
+                codexCircularUnsupportedView
+                    .frame(height: 114)
+            }
         }
     }
 

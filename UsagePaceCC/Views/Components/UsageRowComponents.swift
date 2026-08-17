@@ -64,27 +64,6 @@ struct AnimationTypeHintView: View {
     }
 }
 
-// MARK: - Provider Divider
-
-/// 双 Provider 主窗口中央的柔和竖线，视觉与设置页标签分隔线一致
-struct ProviderDivider: View {
-    let height: CGFloat
-
-    var body: some View {
-        LinearGradient(
-            gradient: Gradient(colors: [
-                Color.secondary.opacity(0.0),
-                Color.secondary.opacity(0.3),
-                Color.secondary.opacity(0.3),
-                Color.secondary.opacity(0.0)
-            ]),
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(width: 1, height: height)
-    }
-}
-
 // MARK: - Unified Limit Row Component
 
 /// 统一的限制行组件（支持所有 Claude 和 Codex 限制类型）

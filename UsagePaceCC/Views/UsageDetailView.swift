@@ -39,10 +39,8 @@ struct UsageDetailView: View {
         }
     }
 
-    // Claude 列加载动画类型（可长按圆环切换）
+    // Claude 加载动画类型（可长按圆环切换，仅圆形模式生效）
     @State var claudeAnimationType: LoadingAnimationType = .rainbow
-    // Codex 列加载动画类型（独立）
-    @State var codexAnimationType: LoadingAnimationType = .rainbow
 
     /// 菜单操作类型
     enum MenuAction {
@@ -73,17 +71,6 @@ struct UsageDetailView: View {
     
     // MARK: - Body
 
-    private var isMultiProviderActive: Bool {
-        UserSettings.shared.isMultiProviderActive
-            && (codexUsageData != nil || codexErrorMessage != nil || UserSettings.shared.hasValidCodexCredentials)
-    }
-
-    private var isCodexOnlyActive: Bool {
-        !isMultiProviderActive
-            && ((!UserSettings.shared.hasValidCredentials && UserSettings.shared.hasValidCodexCredentials)
-                || (usageData == nil && (codexUsageData != nil || codexErrorMessage != nil)))
-    }
-
     private var isClaudeRefreshing: Bool {
         refreshState.isRefreshingProvider(.claude)
     }
@@ -95,215 +82,253 @@ struct UsageDetailView: View {
             .filter { $0.provider == .claude }
     }
 
-    /// 获取当前 Codex 活动的显示类型
-    private var activeCodexDisplayTypes: [LimitType] {
-        guard let codex = codexUsageData else { return [] }
-        return UserSettings.shared.getActiveDisplayTypes(usageData: nil, codexUsageData: codex)
-            .filter { $0.provider == .codex }
+    /// 头部展示的 Provider：Claude 数据存在或 Claude 凭据有效时用 Claude 品牌，
+    /// 否则（Codex-only）用 Codex 品牌。
+    private var primaryProvider: ProviderType {
+        (usageData != nil || UserSettings.shared.hasValidCredentials) ? .claude : .codex
     }
 
-    /// 根据活动类型数量计算动态高度（单 Provider 模式）
-    private var dynamicHeight: CGFloat {
-        let activeCount = activeDisplayTypes.count
-
-        // 统一使用动态计算，确保底部边距一致
-        // 基础高度：圆环、标题、上下边距等固定内容的总高度
-        // 每行实际高度：文字(12pt) + vertical padding(12pt) + 背景高度 ≈ 26pt
-        // 行间距：5pt
-        let baseHeight: CGFloat = 190
-        let rowHeight: CGFloat = 26
-        let spacing: CGFloat = 5
-
-        // 单限制固定显示2行，双限制和3+限制显示对应行数
-        let rowCount = activeCount == 1 ? 2 : activeCount
-        let textHeight = CGFloat(rowCount) * rowHeight + CGFloat(max(0, rowCount - 1)) * spacing
-
-        return baseHeight + textHeight
-    }
-
-    /// Codex-only 模式的动态高度
-    private var codexOnlyHeight: CGFloat {
-        let activeCount = activeCodexDisplayTypes.count
-        let baseHeight: CGFloat = 190
-        let rowHeight: CGFloat = 26
-        let spacing: CGFloat = 5
-        let rowCount = activeCount == 1 ? 2 : max(activeCount, codexUsageData == nil ? 0 : 1)
-        let textHeight = CGFloat(rowCount) * rowHeight + CGFloat(max(0, rowCount - 1)) * spacing
-
-        return baseHeight + textHeight
-    }
-
-    /// 双 Provider 模式的动态高度（取两列最大行数）
-    private var multiProviderHeight: CGFloat {
-        let claudeRowCount: Int
-        if let data = usageData {
-            let types = UserSettings.shared.getActiveDisplayTypes(usageData: data)
-                .filter { $0.provider == .claude }
-            claudeRowCount = types.count == 1 ? 2 : max(types.count, 1)
-        } else {
-            claudeRowCount = 2
+    /// 单列弹出窗口的 legend 类型列表（P06 D1/D5′）：
+    /// - Linear：Claude 行随后是 Codex 行（`getActiveDisplayTypes` 已经按此顺序返回）。
+    ///   若 Codex 处于报错态，Codex 的 legend 行整体被 `codexErrorRow` 顶替，因此这里
+    ///   过滤掉 Codex 类型，避免同时展示「行」和「错误行」。
+    /// - Circular：完全不含 Codex（D5′）。
+    private var legendTypes: [LimitType] {
+        let combined = UserSettings.shared.getActiveDisplayTypes(usageData: usageData, codexUsageData: codexUsageData)
+        switch UserSettings.shared.graphDisplayType {
+        case .circular:
+            return combined.filter { $0.provider == .claude }
+        case .linear:
+            if codexErrorMessage != nil {
+                return combined.filter { $0.provider == .claude }
+            }
+            return combined
         }
-
-        let codexRowCount: Int
-        if let codex = codexUsageData {
-            let types = UserSettings.shared.getActiveDisplayTypes(usageData: nil, codexUsageData: codex)
-                .filter { $0.provider == .codex }
-            codexRowCount = max(types.count, 1)
-        } else {
-            codexRowCount = 2
-        }
-
-        let maxRows = max(claudeRowCount, codexRowCount)
-        let rowHeight: CGFloat = 26
-        let spacing: CGFloat = 5
-        let rowsHeight = CGFloat(maxRows) * rowHeight + CGFloat(max(0, maxRows - 1)) * spacing
-        return 190 + rowsHeight
     }
 
     private var contentSpacing: CGFloat {
-        let visibleTypeCount = isCodexOnlyActive ? activeCodexDisplayTypes.count : activeDisplayTypes.count
-        return visibleTypeCount >= 2 ? 10 : 16
-    }
-
-    private var multiProviderDividerHeight: CGFloat {
-        max(35, multiProviderHeight - 28)
+        legendTypes.count >= 2 ? 10 : 16
     }
 
     private var contentWidth: CGFloat {
-        isMultiProviderActive ? 580 : 290
+        PopoverLayout.width
     }
 
     private var contentHeight: CGFloat {
-        if isMultiProviderActive {
-            return multiProviderHeight
-        }
-        if isCodexOnlyActive {
-            return codexOnlyHeight
-        }
-        return dynamicHeight
+        let rowCount = PopoverLayout.rowCount(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            codexErrorMessage: codexErrorMessage,
+            graphDisplayType: UserSettings.shared.graphDisplayType
+        )
+        return PopoverLayout.height(rowCount: rowCount)
     }
 
     @ViewBuilder
-    private var claudeMainContent: some View {
-        if let error = errorMessage {
-            // 错误信息
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.orange)
-                Text(error)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(.secondary)
+    private func claudeErrorView(_ error: String) -> some View {
+        // 错误信息（Claude 的错误路径是整页替换：没有 Claude 数据时没有别的东西可显示）
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 40))
+                .foregroundColor(.orange)
+            Text(error)
+                .font(.subheadline)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
 
-                // 操作按钮组
-                HStack(spacing: 12) {
-                    // 如果是认证信息错误，显示设置按钮
-                    if error.contains("认证") || error.contains("配置") || error.contains("Authentication") || error.contains("configured") {
-                        Button(action: {
-                            onMenuAction?(.authSettings)
-                        }) {
-                            Label(L.Usage.goToSettings, systemImage: "key.fill")
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    // 诊断连接按钮（所有错误都显示）
+            // 操作按钮组
+            HStack(spacing: 12) {
+                // 如果是认证信息错误，显示设置按钮
+                if error.contains("认证") || error.contains("配置") || error.contains("Authentication") || error.contains("configured") {
                     Button(action: {
                         onMenuAction?(.authSettings)
                     }) {
-                        Label(L.Usage.runDiagnostic, systemImage: "stethoscope")
+                        Label(L.Usage.goToSettings, systemImage: "key.fill")
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
-                            .background(Color.orange)
+                            .background(Color.blue)
                             .foregroundColor(.white)
                             .cornerRadius(8)
                     }
                     .buttonStyle(.plain)
                 }
+
+                // 诊断连接按钮（所有错误都显示）
+                Button(action: {
+                    onMenuAction?(.authSettings)
+                }) {
+                    Label(L.Usage.runDiagnostic, systemImage: "stethoscope")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
             }
-            .padding()
-        } else if let data = usageData {
-            // 使用数据
-            VStack(spacing: 15) {
-                // 根据用户设置选择圆形或线性图表
-                usageGraphView(data: data)
-                .frame(height: 114)
-                .contentShape(Rectangle())  // 定义可点击区域
+        }
+        .padding()
+    }
+
+    /// Codex-only + Circular 模式的空态（D5′ 制造的空档，绝不能空白）。
+    /// 图标 + 一行说明 + 一个把 `graphDisplayType` 切到 `.linear` 的按钮。
+    @ViewBuilder
+    var codexCircularUnsupportedView: some View {
+        VStack(spacing: 8) {
+            if let icon = ImageHelper.createCodexIcon(size: 32) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 32, height: 32)
+            } else {
+                Image(systemName: "chart.xyaxis.line")
+                    .font(.system(size: 28))
+                    .foregroundColor(.secondary)
+            }
+
+            // TODO(P07): move to a localized L. key; wording is locked by phase-06 requirements
+            // ("Codex usage is shown in Linear graph mode") until P07 lands the strings.
+            Text("Codex usage is shown in Linear graph mode")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
+
+            Button(action: {
+                UserSettings.shared.graphDisplayType = .linear
+            }) {
+                // TODO(P07): move to a localized L. key.
+                Text("Switch to Linear")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.15))
+                    .foregroundColor(.blue)
+                    .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Codex 的紧凑错误行（P06 新增）：`codexOnlyMainContent` 曾是 `codexErrorMessage`
+    /// 唯一的渲染出口，删除它之后必须在这里补上——CLI token 大约每 10 天过期一次，
+    /// 这是常规路径，不是边角情况。占据一个 legend 行的位置，点按跳转到 Auth 设置。
+    /// 仅在 Linear 模式下出现：D5′ 下 Circular 模式完全不展示任何 Codex 元素。
+    @ViewBuilder
+    private var codexErrorRow: some View {
+        if UserSettings.shared.graphDisplayType == .linear, let error = codexErrorMessage {
+            Button(action: {
+                onMenuAction?(.authSettings)
+            }) {
+                HStack(spacing: 8) {
+                    if let icon = ImageHelper.createCodexIcon(size: 16) {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.orange)
+                    }
+
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 12)
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+        }
+    }
+
+    /// legend 区域：`legendTypes` 里 Claude 类型走 `data:`，Codex 类型走 `codexData:`。
+    /// 单一 Claude 类型时保留既有的双 InfoRow 特例（Codex 单行不做这个特例——见
+    /// phase-06 要求，Codex 出错时的展示已经由 `codexErrorRow` 承担）。
+    @ViewBuilder
+    private var legendSection: some View {
+        VStack(spacing: 8) {
+            let types = legendTypes
+
+            if types.count >= 2 {
+                VStack(spacing: 5) {
+                    ForEach(types, id: \.self) { type in
+                        if type.provider == .claude {
+                            UnifiedLimitRow(type: type, data: usageData, showRemainingMode: showRemainingMode)
+                        } else {
+                            UnifiedLimitRow(type: type, codexData: codexUsageData, showRemainingMode: showRemainingMode)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
                 .onTapGesture {
-                    if refreshState.canRefresh && !refreshState.isRefreshing {
-                        onMenuAction?(.refreshClaude)
-                    }
+                    withAnimation(.easeInOut(duration: 0.2)) { showRemainingMode.toggle() }
+                    savedRemainingMode = showRemainingMode
                 }
-                .onLongPressGesture(minimumDuration: 3.0) {
-                    // 长按圆环切换动画类型（仅圆形模式有效）
-                    guard UserSettings.shared.graphDisplayType == .circular else { return }
-                    let allTypes = LoadingAnimationType.allCases
-                    let currentIndex = allTypes.firstIndex(of: claudeAnimationType) ?? 0
-                    let nextIndex = (currentIndex + 1) % allTypes.count
-                    claudeAnimationType = allTypes[nextIndex]
+            } else if types.count == 1 {
+                let singleType = types[0]
 
-                    showAnimationHint(claudeAnimationType.name, provider: .claude)
-                }
-
-                VStack(spacing: 8) {
-                    let activeTypes = activeDisplayTypes
-
-                    if activeTypes.count >= 2 {
+                if singleType.provider == .claude, let data = usageData {
+                    if singleType == .fiveHour, let fiveHour = data.fiveHour {
                         VStack(spacing: 5) {
-                            ForEach(activeTypes, id: \.self) { type in
-                                UnifiedLimitRow(
-                                    type: type,
-                                    data: data,
-                                    showRemainingMode: showRemainingMode
-                                )
-                            }
+                            InfoRow(
+                                icon: "clock.fill",
+                                title: L.Usage.fiveHourLimit,
+                                value: fiveHour.formattedResetsInHours
+                            )
+                            InfoRow(
+                                icon: "arrow.clockwise",
+                                title: L.Usage.resetTime,
+                                value: fiveHour.formattedResetTimeShort
+                            )
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.2)) { showRemainingMode.toggle() }
-                            savedRemainingMode = showRemainingMode
-                        }
-                    } else if activeTypes.count == 1 {
-                        let singleType = activeTypes.first!
-
-                        if singleType == .fiveHour, let fiveHour = data.fiveHour {
-                            VStack(spacing: 5) {
-                                InfoRow(
-                                    icon: "clock.fill",
-                                    title: L.Usage.fiveHourLimit,
-                                    value: fiveHour.formattedResetsInHours
-                                )
-                                InfoRow(
-                                    icon: "arrow.clockwise",
-                                    title: L.Usage.resetTime,
-                                    value: fiveHour.formattedResetTimeShort
-                                )
-                            }
-                        } else if singleType == .sevenDay, let sevenDay = data.sevenDay {
-                            VStack(spacing: 5) {
-                                InfoRow(
-                                    icon: "calendar",
-                                    title: L.Usage.sevenDayLimit,
-                                    value: sevenDay.formattedResetsInDays,
-                                    tintColor: .purple
-                                )
-                                InfoRow(
-                                    icon: "calendar.badge.clock",
-                                    title: L.Usage.resetDate,
-                                    value: sevenDay.formattedResetDateLong,
-                                    tintColor: .purple
-                                )
-                            }
+                    } else if singleType == .sevenDay, let sevenDay = data.sevenDay {
+                        VStack(spacing: 5) {
+                            InfoRow(
+                                icon: "calendar",
+                                title: L.Usage.sevenDayLimit,
+                                value: sevenDay.formattedResetsInDays,
+                                tintColor: .purple
+                            )
+                            InfoRow(
+                                icon: "calendar.badge.clock",
+                                title: L.Usage.resetDate,
+                                value: sevenDay.formattedResetDateLong,
+                                tintColor: .purple
+                            )
                         }
                     }
+                } else {
+                    UnifiedLimitRow(type: singleType, codexData: codexUsageData, showRemainingMode: showRemainingMode)
                 }
-                .padding(.horizontal, 14)
+            }
+        }
+        .padding(.horizontal, 14)
+    }
+
+    /// 单列主体内容：Claude 报错时整页替换（不变）；只要任一 Provider 有数据或报错
+    /// 就展示 图 + legend + Codex 错误行；两边都还没有任何数据/错误时展示通用 loading。
+    @ViewBuilder
+    private var mainContent: some View {
+        if let error = errorMessage {
+            claudeErrorView(error)
+        } else if usageData != nil || codexUsageData != nil || codexErrorMessage != nil {
+            VStack(spacing: 15) {
+                usageGraphArea()
+                legendSection
+                codexErrorRow
             }
         } else {
             // 加载中
@@ -479,131 +504,15 @@ struct UsageDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func codexOnlyMainContent(codex: CodexUsageData?) -> some View {
-        if let codex {
-            CodexColumnView(
-                codexUsageData: codex,
-                showRemainingMode: $showRemainingMode,
-                refreshState: refreshState,
-                animationType: $codexAnimationType,
-                rotationAngle: $rotationAngle,
-                onRefresh: { onMenuAction?(.refreshCodex) },
-                onAnimationHint: { showAnimationHint($0, provider: .codex) }
-            )
-        } else if let error = codexErrorMessage {
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.orange)
-                Text(error)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(.secondary)
-
-                HStack(spacing: 12) {
-                    Button(action: {
-                        onMenuAction?(.authSettings)
-                    }) {
-                        Label(L.Usage.goToSettings, systemImage: "key.fill")
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: {
-                        onMenuAction?(.authSettings)
-                    }) {
-                        Label(L.Usage.runDiagnostic, systemImage: "stethoscope")
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.orange)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding()
-        } else {
-            VStack(spacing: 12) {
-                ProgressView()
-                    .scaleEffect(1.2)
-                Text(L.Usage.loading)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .frame(height: 100)
-        }
-    }
-
-    private var singleProviderBody: some View {
+    private var singleColumnBody: some View {
         VStack(spacing: contentSpacing) {
             VStack(spacing: contentSpacing) {
-                headerView(provider: .claude, showsControls: true)
-                claudeMainContent
+                headerView(provider: primaryProvider, showsControls: true)
+                mainContent
             }
             .offset(y: isAnimationHintVisible(for: .claude) ? -18 : 0)
 
             animationHintView(for: .claude)
-            updateNotificationView
-            Spacer()
-        }
-    }
-
-    private func codexOnlyBody(codex: CodexUsageData?) -> some View {
-        VStack(spacing: contentSpacing) {
-            VStack(spacing: contentSpacing) {
-                headerView(provider: .codex, showsControls: true)
-                codexOnlyMainContent(codex: codex)
-            }
-            .offset(y: isAnimationHintVisible(for: .codex) ? -18 : 0)
-
-            animationHintView(for: .codex)
-            updateNotificationView
-            Spacer()
-        }
-    }
-
-    private func multiProviderBody(codex: CodexUsageData?) -> some View {
-        VStack(spacing: contentSpacing) {
-            HStack(alignment: .top, spacing: 0) {
-                VStack(spacing: contentSpacing) {
-                    ZStack(alignment: .bottom) {
-                        VStack(spacing: contentSpacing) {
-                            headerView(provider: .claude, showsControls: false)
-                            claudeMainContent
-                        }
-                        .offset(y: isAnimationHintVisible(for: .claude) ? -18 : 0)
-                    }
-                    .overlay(alignment: .bottom) {
-                        animationHintOverlay(for: .claude)
-                    }
-                }
-                .frame(width: 290, alignment: .top)
-
-                VStack(spacing: contentSpacing) {
-                    ZStack(alignment: .bottom) {
-                        VStack(spacing: contentSpacing) {
-                            headerView(provider: .codex, showsControls: true)
-                            codexOnlyMainContent(codex: codex)
-                        }
-                        .offset(y: isAnimationHintVisible(for: .codex) ? -18 : 0)
-                    }
-                    .overlay(alignment: .bottom) {
-                        animationHintOverlay(for: .codex)
-                    }
-                }
-                .frame(width: 290, alignment: .top)
-            }
-            .overlay(alignment: .center) {
-                ProviderDivider(height: multiProviderDividerHeight)
-                    .allowsHitTesting(false)
-            }
-
             updateNotificationView
             Spacer()
         }
@@ -638,18 +547,9 @@ struct UsageDetailView: View {
     }
 
     var body: some View {
-        Group {
-            if isMultiProviderActive {
-                multiProviderBody(codex: codexUsageData)
-            } else if isCodexOnlyActive {
-                codexOnlyBody(codex: codexUsageData)
-            } else {
-                singleProviderBody
-            }
-        }
+        singleColumnBody
         .frame(width: contentWidth, height: contentHeight)
-        .animation(.easeInOut(duration: 0.25), value: isMultiProviderActive)
-        .animation(.easeInOut(duration: 0.25), value: isCodexOnlyActive)
+        .animation(.easeInOut(duration: 0.25), value: UserSettings.shared.graphDisplayType)
         .animation(.easeInOut(duration: 0.25), value: showAnimationTypeHint)
         .id(localization.updateTrigger)  // 语言变化时重新创建视图
         .onAppear {
@@ -705,7 +605,7 @@ struct UsageDetailView: View {
         #endif
     }
 
-    private func showAnimationHint(_ animationTypeName: String, provider: ProviderType) {
+    func showAnimationHint(_ animationTypeName: String, provider: ProviderType) {
         animationTypeHintDismissWorkItem?.cancel()
         animationTypeHintName = animationTypeName
         animationTypeHintProvider = provider
