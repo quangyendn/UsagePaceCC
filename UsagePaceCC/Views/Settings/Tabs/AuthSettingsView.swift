@@ -147,6 +147,10 @@ struct AuthSettingsView: View {
                 // 保证纯 Claude 用户看到的 Auth 页与改动前完全一致（区块整体缺席，而非空区块）。
                 if settings.isCLISourceConfigured || settings.isBrowserSourceConfigured {
                     codexSourceSection
+                } else if settings.isCodexCLIOptInPending {
+                    // 只检测到 CLI、用户还没启用：只多出一行 opt-in 提示，没有区块标题、
+                    // 没有单选、没有账户分组 —— 没装 Codex CLI 的用户这里依然什么都看不到。
+                    cliOptInRow
                 }
 
                 // 添加账户入口
@@ -168,7 +172,13 @@ struct AuthSettingsView: View {
                 .padding(.top, 4)
 
             VStack(spacing: 2) {
-                sourceRow(.cli)
+                // CLI 已检测到但未启用时，这一行不是可选来源，而是 opt-in 入口：
+                // 选中一个未启用的来源没有任何意义，radio 会变成死选项。
+                if settings.isCodexCLIOptInPending {
+                    cliOptInRow
+                } else {
+                    sourceRow(.cli)
+                }
                 sourceRow(.browser)
             }
 
@@ -178,7 +188,42 @@ struct AuthSettingsView: View {
         }
     }
 
-    /// 单个来源行：单选 + 图标 + 标题 + 状态行 + 尾随控件（CLI 的 Re-scan）+ Active 标记。
+    /// CLI 一次性 opt-in 行：检测到 `~/.codex/auth.json`，但用户尚未同意本 App 使用它。
+    /// 在用户点 Enable 之前，App 不会用 CLI 凭据发起任何网络请求，也不会改动菜单栏 / 弹窗 / 显示偏好。
+    private var cliOptInRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "terminal")
+                .foregroundColor(.secondary)
+                .font(.system(size: 14))
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L.SettingsAuth.codexCliOptInTitle)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+
+                Text(L.SettingsAuth.codexCliOptInHint)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Button(action: {
+                settings.setCodexCLIEnabled(true)
+            }) {
+                Text(L.SettingsAuth.codexCliEnable)
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+    }
+
+    /// 单个来源行：单选 + 图标 + 标题 + 状态行 + 尾随控件（CLI 的 Re-scan / Disable）+ Active 标记。
     /// 复用 `accountRow` 的单选视觉习惯（largecircle.fill.circle / circle），而非 `Picker`，
     /// 以便保留每行的富文本内容（phase-07 Architecture）。
     private func sourceRow(_ source: CodexSource) -> some View {
@@ -236,6 +281,17 @@ struct AuthSettingsView: View {
                             .font(.caption)
                     }
                     .buttonStyle(.bordered)
+
+                    // 关闭 opt-in：一个刷新周期内 Codex 会从图表 / 菜单栏 / 弹窗中完全消失
+                    if settings.codexCLIEnabled {
+                        Button(action: {
+                            settings.setCodexCLIEnabled(false)
+                        }) {
+                            Text(L.SettingsAuth.codexCliDisable)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
             }
             .padding(.vertical, 6)
