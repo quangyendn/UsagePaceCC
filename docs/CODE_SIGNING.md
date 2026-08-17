@@ -2,16 +2,21 @@
 
 ## Overview
 
-UsagePaceCC currently produces **ad-hoc-signed** artifacts from both the local
-`scripts/build.sh` path and CI. Ad-hoc signing satisfies the build system but is
-not accepted by macOS Gatekeeper — end-users must right-click the app and choose
-"Open" on first launch, or Gatekeeper will block it.
+**All builds — local and CI — are ad-hoc-signed.** `scripts/build.sh` unconditionally
+forces `CODE_SIGN_IDENTITY="-"`, so there is no Developer ID certificate involved and
+no notarization, ever, regardless of what runs the script.
+
+**Gatekeeper will warn users.** Ad-hoc signing satisfies Xcode's build system but is
+not accepted by macOS Gatekeeper as a trusted identity. On first launch, downloaders
+must **right-click the app → Open** (or **System Settings → Privacy & Security → Open
+Anyway**) to bypass the warning. This is stated here without hedging because it is
+what every downloader of a `.dmg` from this repo will hit.
 
 | Context | Signing used | Notes |
 |---------|--------------|-------|
-| Xcode.app GUI build | `UsagePaceCC-CodeSigning` (self-signed) | Must be in your login keychain |
+| Xcode.app GUI build | ad-hoc (`-`) | Set directly in `project.pbxproj`; no cert required |
 | `scripts/build.sh` (local) | ad-hoc (`-`) | No cert required; Gatekeeper warns |
-| CI (GitHub Actions, calls `build.sh`) | ad-hoc (`-`) | `build.sh` overrides the imported cert; see note below |
+| CI (GitHub Actions, calls `build.sh`) | ad-hoc (`-`) | No certificate import happens; `build.sh` is the only signing authority |
 
 ---
 
@@ -20,29 +25,21 @@ not accepted by macOS Gatekeeper — end-users must right-click the app and choo
 The project's `project.pbxproj` sets:
 
 ```
-CODE_SIGN_IDENTITY = "UsagePaceCC-CodeSigning";
-"CODE_SIGN_IDENTITY[sdk=macosx*]" = "UsagePaceCC-CodeSigning";
+CODE_SIGN_IDENTITY = "-";
+"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 ```
 
-When building directly inside Xcode.app, the cert named `UsagePaceCC-CodeSigning` must
-be present in your login keychain.
+This builds out of the box for anyone who clones the repo — no certificate needs to
+exist in any keychain. `project.pbxproj` previously referenced a
+`UsagePaceCC-CodeSigning` identity that was never actually created, which meant a
+clean-clone `⌘B` failed with *"No certificate matching 'UsagePaceCC-CodeSigning'
+found"*. That has been corrected: both build configurations now use ad-hoc signing,
+matching `scripts/build.sh` and CI.
 
-### Creating the Self-Signed Certificate (Manual Step)
-
-This cannot be scripted via GUI; it must be done manually in Keychain Access:
-
-1. Open **Keychain Access** (Applications → Utilities → Keychain Access).
-2. From the menu bar: **Keychain Access → Certificate Assistant → Create a Certificate...**
-3. Fill in the form:
-   - **Name**: `UsagePaceCC-CodeSigning`
-   - **Identity Type**: Self Signed Root
-   - **Certificate Type**: Code Signing
-   - Leave "Let me override defaults" unchecked unless you need custom validity.
-4. Click **Create**, then **Done**.
-5. The certificate now appears in your **login** keychain under "My Certificates".
-
-> **Note**: This certificate is required ONLY for Xcode.app GUI builds (Manual signing
-> set in `project.pbxproj`). It is NOT required for `scripts/build.sh` or CI.
+> Creating a real self-signed `UsagePaceCC-CodeSigning` certificate for local GUI
+> builds — and reintroducing it in `project.pbxproj` — is deferred to a future phase
+> (Phase 07 of the `full-brand-independence` plan). Until that lands, all three build
+> paths in the table above are ad-hoc and behave identically.
 
 ---
 
@@ -64,23 +61,12 @@ by Gatekeeper on other machines. Users must right-click → "Open" on first laun
 
 ## CI (GitHub Actions)
 
-CI (`.github/workflows/release.yml`) imports a `.p12` certificate from GitHub Secrets
-before calling `scripts/build.sh`:
-
-| Secret Name | Content |
-|-------------|---------|
-| `CODESIGN_CERTIFICATE` | Base64-encoded `.p12` export of the `UsagePaceCC-CodeSigning` cert |
-| `CODESIGN_PASSWORD` | Password used when exporting the `.p12` |
-
-**Important — the cert import is currently unused.** Because `build.sh` sets
-`CODE_SIGN_IDENTITY="-"` unconditionally, CI artifacts are ad-hoc-signed regardless
-of what is imported into the keychain. The import step adds no signing benefit today.
-
-Optional cleanup (either is acceptable):
-- **Remove** the "Import code signing certificate" step from `release.yml` to keep CI
-  simple and avoid requiring secrets that have no effect.
-- **OR** make `build.sh` respect an environment variable override (e.g.
-  `CODE_SIGN_IDENTITY` if already set) so CI can pass a real identity when desired.
+CI (`.github/workflows/release.yml`) calls `scripts/build.sh` directly. **There is no
+certificate-import step and no `CODESIGN_*` secrets configured on this repo** — a
+previous CI step imported a `.p12` certificate before building, but since `build.sh`
+always forces `CODE_SIGN_IDENTITY="-"`, that import never affected a single artifact.
+It was pure ceremony that also kept two unused secrets alive for no benefit, so it was
+removed. CI artifacts are ad-hoc-signed, identically to a local `scripts/build.sh` run.
 
 ---
 
@@ -93,8 +79,11 @@ For Gatekeeper-transparent distribution (no right-click workaround), you would n
 2. **Notarization** via `xcrun notarytool submit` after signing.
 3. **Stapling** with `xcrun stapler staple`.
 
-This is out of scope for the current project and is documented here only for reference.
+This is out of scope for the current project and is documented here only for
+reference. It is tracked as the deferred Phase 07 (`full-brand-independence` plan):
+create the certificate, wire it into CI, and publish the first signed (or at least
+consistently ad-hoc, clearly-labeled) release.
 
-> **Repo note**: The repo is `quangyendn/UsagePaceCC`. The `.xcodeproj` filename
-> (`Usage4Claude.xcodeproj`) is unchanged — only the certificate identity name and the
-> built product name (`UsagePaceCC.app`) have changed.
+> **Repo note**: The repo is `quangyendn/UsagePaceCC`. The Xcode project file was
+> renamed to `UsagePaceCC.xcodeproj` (Phase 03 of the `full-brand-independence` plan);
+> it is no longer `Usage4Claude.xcodeproj`.
