@@ -323,16 +323,13 @@ struct AuthSettingsView: View {
     }
 
     /// D12：两个来源都已配置，且 ChatGPT account id 不同时的提醒。账户 id 本身永不展示。
-    /// - Important: Browser 来源目前没有在本地状态中暴露 `chatgpt_account_id`
-    ///   （该字段只出现在 `/api/auth/session` 响应里，落地成 `UserSettings` 上的可比较属性
-    ///   需要改动 `CodexBrowserUsageSource`/`UserSettings`，不在本阶段 Files Touched 白名单内）。
-    ///   在该字段接入之前 `browserChatGPTAccountId` 恒为 `nil`，警告按设计保持沉默——
-    ///   这是"未知 id 保持沉默"的既定退化行为，不是误判（见 phase-07 Risk Assessment）。
+    /// - Important: 两个 id 都非 nil 且不相等时才触发；任一为 nil（尚未成功请求过、解析失败）
+    ///   一律保持沉默，不做误判性提示。
     @ViewBuilder
     private var accountMismatchWarning: some View {
         if settings.isCLISourceConfigured, settings.isBrowserSourceConfigured,
            let cliId = settings.codexCLIChatGPTAccountId,
-           let browserId = browserChatGPTAccountId,
+           let browserId = settings.codexBrowserChatGPTAccountId,
            cliId != browserId {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -349,9 +346,6 @@ struct AuthSettingsView: View {
             .padding(.top, 2)
         }
     }
-
-    /// Browser 来源的 ChatGPT account id — 见 `accountMismatchWarning` 上的说明，目前未接入数据源。
-    private var browserChatGPTAccountId: String? { nil }
 
     private var addAccountActionsView: some View {
         VStack(alignment: .leading, spacing: 8) {

@@ -204,8 +204,6 @@
 "error.codex_cli_invalid_auth_tab" = "Codex CLI sign-in was rejected. Run `codex login` in Terminal, or switch to Browser Session.";
 "error.codex_browser_expired_popover" = "Codex: browser sign-in expired";
 "error.codex_browser_expired_auth_tab" = "Codex browser session expired. Sign in again, or switch to Codex CLI in Settings.";
-"error.codex_cli_reauth_required" = "Codex CLI session expired. Run `codex login` in Terminal, or switch to Browser Session in Settings.";
-"error.codex_browser_reauth_required" = "Codex browser session expired. Sign in again, or switch to Codex CLI in Settings.";
 
 // MARK: - Launch at Login
 "launch.status.enabled" = "Enabled";
