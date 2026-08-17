@@ -476,12 +476,141 @@ class UserSettings: ObservableObject {
             return true
         }
         #endif
-        return !accounts.isEmpty && !codexAccounts.isEmpty
+        return !accounts.isEmpty && hasAnyCodexSource
     }
 
-    /// Codex 认证信息是否已配置
+    // MARK: - Codex 双来源仲裁（CLI / Browser，见 plan.md D9/D10/D11/D13）
+
+    /// 用户偏好的 Codex 凭据来源，持久化到 UserDefaults，默认 CLI
+    @Published var codexSource: CodexSource {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_codexSource"
+            #else
+            let key = "codexSource"
+            #endif
+            defaults.set(codexSource.rawValue, forKey: key)
+        }
+    }
+
+    /// Codex CLI 是否被检测到（凭据文件可读且能解析出 access_token；过期的 token 依然算检测到 —— D13）
+    @Published private(set) var codexCLIDetected: Bool = false
+
+    /// Codex CLI 账户展示标签（邮箱优先，其次 account_id）
+    @Published private(set) var codexCLIAccountLabel: String?
+
+    /// 最近一次读取 Codex CLI 凭据时遇到的错误，用于 P07 展示具体原因
+    @Published private(set) var codexCLIError: CodexCLIAuthError?
+
+    /// Codex CLI 侧的 ChatGPT account id —— D12 账户比对的关键字段
+    @Published private(set) var codexCLIChatGPTAccountId: String?
+
+    /// Codex CLI 侧的订阅计划类型
+    @Published private(set) var codexCLIPlanType: String?
+
+    /// 是否存在任意一个 Codex 凭据来源（CLI 或 Browser）
+    /// - Important: 只用于"是否存在来源"的判断（existence gate）。凡是需要遍历真实账户列表
+    ///   或对 `codexAccounts` 做增删的地方，一律保持读 `codexAccounts` 本身，不要替换成这个属性（D11）。
+    var hasAnyCodexSource: Bool { codexCLIDetected || !codexAccounts.isEmpty }
+
+    /// CLI 来源是否已配置（过期的 token 依然算已配置，不触发向 Browser 的可用性回退 —— D13）
+    var isCLISourceConfigured: Bool { codexCLIDetected }
+
+    /// Browser 来源是否已配置
+    var isBrowserSourceConfigured: Bool { !codexSessionToken.isEmpty }
+
+    /// 当前生效的 Codex 来源；两个来源都未配置时为 nil
+    /// - Note: 仅在"用户偏好的来源未配置、另一个来源已配置"时回退，这是可用性判断，不是失败时的静默切换
+    var effectiveCodexSource: CodexSource? {
+        if isSourceConfigured(codexSource) { return codexSource }
+        if isSourceConfigured(codexSource.other) { return codexSource.other }
+        return nil
+    }
+
+    /// `effectiveCodexSource` 是否因用户偏好的来源不可用而回退到另一个来源（用于 P07 提示文案）
+    var codexSourceIsFallback: Bool {
+        guard let effective = effectiveCodexSource else { return false }
+        return effective != codexSource
+    }
+
+    /// Codex 认证信息是否已配置（widened：CLI 或 Browser 任一来源可用即可）
     var hasValidCodexCredentials: Bool {
-        !codexSessionToken.isEmpty
+        effectiveCodexSource != nil
+    }
+
+    private func isSourceConfigured(_ source: CodexSource) -> Bool {
+        switch source {
+        case .cli: return isCLISourceConfigured
+        case .browser: return isBrowserSourceConfigured
+        }
+    }
+
+    /// 重新探测 Codex CLI 凭据文件，更新 `codexCLIDetected` / `codexCLIAccountLabel` 等派生状态
+    /// - Returns: 检测状态或账户标签是否发生了变化
+    /// - Important: 只读（D10）。这里只是读取并解析文件，绝不写回 `~/.codex/`，也绝不发起网络请求。
+    @discardableResult
+    func refreshCodexCLIState() -> Bool {
+        let wasDetected = codexCLIDetected
+        let previousLabel = codexCLIAccountLabel
+        let wasValidCredentials = hasValidCodexCredentials
+
+        do {
+            let auth = try CodexCLIAuthReader.read()
+            codexCLIDetected = true
+            codexCLIAccountLabel = auth.email ?? auth.accountId
+            codexCLIChatGPTAccountId = auth.chatgptAccountId
+            codexCLIPlanType = auth.planType
+            codexCLIError = nil
+            Logger.api.debug("Codex CLI 已检测到，凭据有效")
+        } catch let error as CodexCLIAuthError {
+            codexCLIError = error
+            switch error {
+            case .tokenExpired:
+                // D13：过期的 token 依然算"已配置"，不能因为过期就当作未安装
+                codexCLIDetected = true
+                codexCLIAccountLabel = nil
+                codexCLIChatGPTAccountId = nil
+                codexCLIPlanType = nil
+                Logger.api.debug("Codex CLI 已检测到，但 access_token 已过期")
+            case .notInstalled:
+                codexCLIDetected = false
+                codexCLIAccountLabel = nil
+                codexCLIChatGPTAccountId = nil
+                codexCLIPlanType = nil
+                Logger.api.debug("Codex CLI 未检测到（凭据文件不存在）")
+            case .sandboxDenied:
+                codexCLIDetected = false
+                codexCLIAccountLabel = nil
+                codexCLIChatGPTAccountId = nil
+                codexCLIPlanType = nil
+                Logger.api.debug("Codex CLI 凭据文件读取被沙盒拒绝")
+            case .malformed, .noAccessToken:
+                codexCLIDetected = false
+                codexCLIAccountLabel = nil
+                codexCLIChatGPTAccountId = nil
+                codexCLIPlanType = nil
+                Logger.api.debug("Codex CLI 凭据文件存在但无法解析")
+            }
+        } catch {
+            codexCLIDetected = false
+            codexCLIAccountLabel = nil
+            codexCLIChatGPTAccountId = nil
+            codexCLIPlanType = nil
+            codexCLIError = .malformed
+            Logger.api.debug("Codex CLI 凭据读取失败：未知错误")
+        }
+
+        Logger.api.debug("Codex 当前生效来源: \(String(describing: self.effectiveCodexSource), privacy: .public)")
+
+        if !wasValidCredentials && hasValidCodexCredentials {
+            ensureDefaultCodexDisplayTypesForCustomMode()
+        }
+
+        let changed = (wasDetected != codexCLIDetected) || (previousLabel != codexCLIAccountLabel)
+        if changed {
+            postAccountChanged(provider: .codex)
+        }
+        return changed
     }
 
     // MARK: - 非敏感设置（存储在UserDefaults中）
@@ -878,6 +1007,19 @@ class UserSettings: ObservableObject {
             self.currentCodexAccountId = id
         } else {
             self.currentCodexAccountId = loadedCodexAccounts.first?.id
+        }
+
+        // 加载 Codex 凭据来源偏好（CLI / Browser），默认 CLI —— D9
+        #if DEBUG
+        let codexSourceKey = "DEBUG_codexSource"
+        #else
+        let codexSourceKey = "codexSource"
+        #endif
+        if let sourceString = defaults.string(forKey: codexSourceKey),
+           let source = CodexSource(rawValue: sourceString) {
+            self.codexSource = source
+        } else {
+            self.codexSource = .cli
         }
 
         // MARK: - 旧版迁移（v1.x → v2.0.0，保留向后兼容）
@@ -1550,7 +1692,7 @@ class UserSettings: ObservableObject {
             // 自定义模式：按用户选择排序，无论数据是否存在都显示
             // Codex 类型仅在有 Codex 账号时纳入候选；Debug mock 模式例外
             var orderedTypes: [LimitType] = [.fiveHour, .sevenDay, .extraUsage, .opusWeekly, .sonnetWeekly]
-            var shouldIncludeCodexTypes = !codexAccounts.isEmpty
+            var shouldIncludeCodexTypes = hasAnyCodexSource
             #if DEBUG
             if debugModeEnabled {
                 shouldIncludeCodexTypes = true
