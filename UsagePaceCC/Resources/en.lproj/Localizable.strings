@@ -261,6 +261,7 @@
 "codex_primary_limit" = "Codex 5-Hour Limit";
 "codex_secondary_limit" = "Codex 7-Day Limit";
 "codex_extra_usage" = "Codex Extra Usage";
+"codex_limit_neutral" = "Codex Limit";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5-Hour Limit";

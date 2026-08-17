@@ -407,6 +407,22 @@ enum L {
         static var codexPrimary: String { localized("codex_primary_limit") }
         static var codexSecondary: String { localized("codex_secondary_limit") }
         static var codexExtraUsage: String { localized("codex_extra_usage") }
+
+        /// Window-derived Codex legend label (P05). Never trust `.codexPrimary`'s hardcoded
+        /// "Codex 5-Hour Limit" for a window whose actual length is unknown — this account has been
+        /// observed with `limit_window_seconds = 604800` (7 days) on the *primary* window.
+        /// - Parameter windowSeconds: seconds from `CodexUsageData.LimitData.windowSeconds`, nil-safe.
+        static func codexWindowName(windowSeconds: TimeInterval?) -> String {
+            guard let windowSeconds else { return localized("codex_limit_neutral") }
+            let minutes = windowSeconds / 60
+            if minutes == 300 {
+                return localized("codex_primary_limit")
+            } else if minutes == 10080 {
+                return localized("codex_secondary_limit")
+            } else {
+                return localized("codex_limit_neutral")
+            }
+        }
     }
 
     // MARK: - Display Options (v2.0.0)

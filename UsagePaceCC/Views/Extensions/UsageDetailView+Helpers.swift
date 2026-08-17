@@ -169,11 +169,21 @@ extension UsageDetailView {
     func usageGraphView(data: UsageData) -> some View {
         switch UserSettings.shared.graphDisplayType {
         case .circular:
+            // D5′: circular mode renders no Codex element at all — Claude-only, unchanged.
             circularGraphView(data: data)
         case .linear:
+            // Codex is plotted as extra dot(s) on this same graph (P05, D1). `activeDisplayTypes`
+            // (Claude-filtered, used by the legend below the graph) is intentionally left untouched;
+            // the graph alone widens to the combined list so Claude-only users see zero change
+            // (codexUsageData is nil for them and getActiveDisplayTypes returns the same Claude-only
+            // list it always has).
             LinearUsageGraphView(
                 usageData: data,
-                activeDisplayTypes: activeDisplayTypes,
+                codexUsageData: codexUsageData,
+                activeDisplayTypes: UserSettings.shared.getActiveDisplayTypes(
+                    usageData: data,
+                    codexUsageData: codexUsageData
+                ),
                 isRefreshing: refreshState.isRefreshing
             )
         }
