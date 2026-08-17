@@ -1,7 +1,7 @@
 ---
 title: "Full Brand Independence — UsagePaceCC"
 description: "Detach + rename the GitHub fork, take over main, rename the Xcode project/target/scheme/source-dir, sweep residual Usage4Claude branding, and downgrade upstream coupling to manual-only — while keeping every MIT attribution intact."
-status: pending
+status: done
 priority: P1
 effort: 10h  # Phases 01–06 in scope; 07–08 deferred (+5h)
 branch: feat/rebrand-usagepacecc
@@ -32,7 +32,7 @@ every MIT obligation preserved.
 | 03 | Xcode project/target/scheme/source-dir rename | **Done (2026-08-17)** | 2.5h | [phase-03](./phase-03-xcode-rename.md) |
 | 04 | Residual string sweep (MIT exclusion list) | **Done (2026-08-17)** | 3h | [phase-04](./phase-04-string-sweep.md) |
 | 05 | GitHub identity: detach → rename → re-point | **Done (2026-08-17)** | 1.5h | [phase-05](./phase-05-github-identity.md) |
-| 06 | Upstream decoupling + signing cleanup | Pending | 1.5h | [phase-06](./phase-06-upstream-decoupling.md) |
+| 06 | Upstream decoupling + signing cleanup | **Done (2026-08-17)** | 1.5h | [phase-06](./phase-06-upstream-decoupling.md) |
 | 07 | Code-signing cert + first release publish | **Deferred (out of scope)** | 2h | [phase-07](./phase-07-signing-release.md) |
 | 08 | Website rebrand + Cloudflare domain rename | **Deferred (out of scope)** | 2.5h | [phase-08](./phase-08-website.md) |
 
