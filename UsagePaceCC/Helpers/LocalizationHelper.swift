@@ -328,6 +328,14 @@ enum L {
         static var noOrganizationsFound: String { localized("error.no_organizations_found") }
         static var unauthorized: String { localized("error.unauthorized") }
         static var rateLimited: String { localized("error.rate_limited") }
+
+        // Codex dual-source errors (plan.md D9/D13) — wording is verbatim per phase-03, do not paraphrase
+        static var codexCLIExpiredPopover: String { localized("error.codex_cli_expired_popover") }
+        static var codexCLIExpiredAuthTab: String { localized("error.codex_cli_expired_auth_tab") }
+        static var codexCLIInvalidPopover: String { localized("error.codex_cli_invalid_popover") }
+        static var codexCLIInvalidAuthTab: String { localized("error.codex_cli_invalid_auth_tab") }
+        static var codexBrowserExpiredPopover: String { localized("error.codex_browser_expired_popover") }
+        static var codexBrowserExpiredAuthTab: String { localized("error.codex_browser_expired_auth_tab") }
     }
 
     // MARK: - Diagnostics

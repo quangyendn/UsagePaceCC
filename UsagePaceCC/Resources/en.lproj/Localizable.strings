@@ -180,6 +180,14 @@
 "error.unauthorized" = "Authentication failed, please check your credentials";
 "error.rate_limited" = "Too many requests, please try again later";
 
+// MARK: - Codex Source Errors (dual-source: CLI / Browser, see plan.md D9/D13)
+"error.codex_cli_expired_popover" = "Codex: run `codex` in Terminal to refresh";
+"error.codex_cli_expired_auth_tab" = "Codex CLI sign-in needs refreshing. Run any `codex` command in Terminal — UsagePaceCC never modifies your CLI sign-in.";
+"error.codex_cli_invalid_popover" = "Codex: run `codex login` in Terminal";
+"error.codex_cli_invalid_auth_tab" = "Codex CLI sign-in was rejected. Run `codex login` in Terminal, or switch to Browser Session.";
+"error.codex_browser_expired_popover" = "Codex: browser sign-in expired";
+"error.codex_browser_expired_auth_tab" = "Codex browser session expired. Sign in again, or switch to Codex CLI in Settings.";
+
 // MARK: - Launch at Login
 "launch.status.enabled" = "Enabled";
 "launch.status.disabled" = "Disabled";
