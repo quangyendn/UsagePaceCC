@@ -185,9 +185,7 @@ struct UsageDetailView: View {
                     .foregroundColor(.secondary)
             }
 
-            // TODO(P07): move to a localized L. key; wording is locked by phase-06 requirements
-            // ("Codex usage is shown in Linear graph mode") until P07 lands the strings.
-            Text("Codex usage is shown in Linear graph mode")
+            Text(L.Usage.codexCircularUnsupported)
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -197,8 +195,7 @@ struct UsageDetailView: View {
             Button(action: {
                 UserSettings.shared.graphDisplayType = .linear
             }) {
-                // TODO(P07): move to a localized L. key.
-                Text("Switch to Linear")
+                Text(L.Usage.switchToLinear)
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)

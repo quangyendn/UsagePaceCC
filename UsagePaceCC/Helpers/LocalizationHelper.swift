@@ -71,6 +71,8 @@ enum L {
         static var refreshCooldown: String { localized("usage.refresh_cooldown") }
         static var runDiagnostic: String { localized("usage.run_diagnostic") }
         static var codexTitle: String { localized("usage.codex_title") }
+        static var codexCircularUnsupported: String { localized("usage.codex_circular_unsupported") }
+        static var switchToLinear: String { localized("usage.switch_to_linear") }
     }
     
     // MARK: - Settings Tabs
@@ -123,6 +125,21 @@ enum L {
         static var showPassword: String { localized("settings.auth.show_password") }
         static var hidePassword: String { localized("settings.auth.hide_password") }
         static var manualInputClaudeOnlyHelp: String { localized("settings.auth.manual_input_claude_only_help") }
+
+        // Codex Data Source section (dual-source picker, plan.md D8'/D9/D12/D13)
+        static var codexSourceTitle: String { localized("settings.auth.codex_source_title") }
+        static var codexSourceCli: String { localized("settings.auth.codex_source_cli") }
+        static var codexSourceBrowser: String { localized("settings.auth.codex_source_browser") }
+        static var codexCliDetected: String { localized("settings.auth.codex_cli_detected") }
+        static var codexCliExpired: String { localized("settings.auth.codex_cli_expired") }
+        static var codexCliExpiredHint: String { localized("settings.auth.codex_cli_expired_hint") }
+        static var codexAccountMismatch: String { localized("settings.auth.codex_account_mismatch") }
+        static var codexCliNotDetected: String { localized("settings.auth.codex_cli_not_detected") }
+        static var codexCliMalformed: String { localized("settings.auth.codex_cli_malformed") }
+        static var codexCliHint: String { localized("settings.auth.codex_cli_hint") }
+        static var codexRescan: String { localized("settings.auth.codex_rescan") }
+        static var codexSourceActive: String { localized("settings.auth.codex_source_active") }
+        static var codexSourceFallback: String { localized("settings.auth.codex_source_fallback") }
     }
     
     // MARK: - Settings About
@@ -336,6 +353,8 @@ enum L {
         static var codexCLIInvalidAuthTab: String { localized("error.codex_cli_invalid_auth_tab") }
         static var codexBrowserExpiredPopover: String { localized("error.codex_browser_expired_popover") }
         static var codexBrowserExpiredAuthTab: String { localized("error.codex_browser_expired_auth_tab") }
+        static var codexCliReauthRequired: String { localized("error.codex_cli_reauth_required") }
+        static var codexBrowserReauthRequired: String { localized("error.codex_browser_reauth_required") }
     }
 
     // MARK: - Diagnostics
@@ -407,6 +426,7 @@ enum L {
         static var codexPrimary: String { localized("codex_primary_limit") }
         static var codexSecondary: String { localized("codex_secondary_limit") }
         static var codexExtraUsage: String { localized("codex_extra_usage") }
+        static var codexGenericLimit: String { localized("codex_generic_limit") }
 
         /// Window-derived Codex legend label (P05). Never trust `.codexPrimary`'s hardcoded
         /// "Codex 5-Hour Limit" for a window whose actual length is unknown — this account has been
