@@ -31,7 +31,7 @@ every MIT obligation preserved.
 | 02 | Branch takeover: `main` = rebrand line | **Done (2026-08-17)** | 1.5h | [phase-02](./phase-02-branch-takeover.md) |
 | 03 | Xcode project/target/scheme/source-dir rename | **Done (2026-08-17)** | 2.5h | [phase-03](./phase-03-xcode-rename.md) |
 | 04 | Residual string sweep (MIT exclusion list) | **Done (2026-08-17)** | 3h | [phase-04](./phase-04-string-sweep.md) |
-| 05 | GitHub identity: detach → rename → re-point | Pending | 1.5h | [phase-05](./phase-05-github-identity.md) |
+| 05 | GitHub identity: detach → rename → re-point | **Done (2026-08-17)** | 1.5h | [phase-05](./phase-05-github-identity.md) |
 | 06 | Upstream decoupling + signing cleanup | Pending | 1.5h | [phase-06](./phase-06-upstream-decoupling.md) |
 | 07 | Code-signing cert + first release publish | **Deferred (out of scope)** | 2h | [phase-07](./phase-07-signing-release.md) |
 | 08 | Website rebrand + Cloudflare domain rename | **Deferred (out of scope)** | 2.5h | [phase-08](./phase-08-website.md) |
