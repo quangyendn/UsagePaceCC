@@ -320,6 +320,33 @@ else
 fi
 
 # ============================================
+# 重新签名（必须在复制 LICENSE 之后）
+# ============================================
+# 向 Contents/Resources 写入任何文件都会破坏 -exportArchive 已经封好的
+# 代码签名封印，codesign -v 会报 "a sealed resource is missing or invalid"。
+# 签名损坏时 macOS 可能拒绝授予 entitlements（包括读取 ~/.codex/ 的
+# 临时例外），因此这里必须重新签名，不能省略。
+print_header "重新签名 app bundle"
+
+ENTITLEMENTS_FILE="${PROJECT_ROOT}/UsagePaceCC/UsagePaceCC.entitlements"
+
+if [ ! -f "$ENTITLEMENTS_FILE" ]; then
+    print_error "未找到 entitlements 文件: $ENTITLEMENTS_FILE"
+    exit 1
+fi
+
+codesign --force --deep --sign - \
+    --entitlements "$ENTITLEMENTS_FILE" \
+    "${EXPORT_DIR}/${PROJECT_NAME}.app"
+
+if codesign --verify --strict --deep "${EXPORT_DIR}/${PROJECT_NAME}.app" 2>&1; then
+    print_success "签名校验通过"
+else
+    print_error "签名校验失败，产物不可用"
+    exit 1
+fi
+
+# ============================================
 # 创建 DMG
 # ============================================
 print_header "创建 DMG 安装包"
