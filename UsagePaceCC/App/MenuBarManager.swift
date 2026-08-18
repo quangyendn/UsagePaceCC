@@ -252,7 +252,39 @@ class MenuBarManager: ObservableObject {
                 self.ui.clearIconCache()
                 // 只刷新切换的 Provider，避免另一家的数据和通知状态被误清理
                 self.dataManager.handleAccountChanged(provider: provider)
+                // 凭据首次出现时（例如 codex login 首次被检测到）顺带幂等地启动定时刷新
+                self.ensureRefreshingIfCredentialed()
                 // 更新菜单栏图标
+                self.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+
+        // 监听 Codex 来源（CLI / Browser）切换，立即用新来源重新拉取，而不是等待下一个刷新周期（见 plan.md D9）
+        settings.$codexSource
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] source in
+                guard let self = self else { return }
+                Logger.menuBar.notice("Codex 来源已切换为 \(String(describing: source), privacy: .public)，立即重新拉取")
+                self.dataManager.handleCodexSourceChanged()
+                self.ensureRefreshingIfCredentialed()
+            }
+            .store(in: &cancellables)
+
+        // 监听 Codex CLI 的显式 opt-in 开关：启用后立即拉取，关闭后立即清空 Codex 状态并重绘图标，
+        // 都不必等下一个刷新周期。
+        // - Note: `@Published` 在 willSet 阶段发布，此时属性尚未写入；`receive(on:)` 把回调推到
+        //   下一个 main runloop，保证 `effectiveCodexSource` 读到的是新值。
+        settings.$codexCLIEnabled
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                guard let self = self else { return }
+                Logger.menuBar.notice("Codex CLI 来源开关变更为 \(enabled, privacy: .public)，立即刷新")
+                self.ui.clearIconCache()
+                self.dataManager.handleCodexSourceChanged()
+                self.ensureRefreshingIfCredentialed()
                 self.updateMenuBarIcon()
             }
             .store(in: &cancellables)
@@ -321,60 +353,13 @@ class MenuBarManager: ObservableObject {
     }
 
     private func usageDetailContentSize() -> NSSize {
-        let baseHeight: CGFloat = 190
-        let rowHeight: CGFloat = 26
-        let spacing: CGFloat = 5
-
-        if settings.isMultiProviderActive && (codexUsageData != nil || codexErrorMessage != nil || settings.hasValidCodexCredentials) {
-            let claudeRowCount: Int
-            if let data = usageData {
-                let types = settings.getActiveDisplayTypes(usageData: data)
-                    .filter { $0.provider == .claude }
-                claudeRowCount = types.count == 1 ? 2 : max(types.count, 1)
-            } else {
-                claudeRowCount = 2
-            }
-
-            let codexRowCount: Int
-            if let codex = codexUsageData {
-                let codexTypes = settings.getActiveDisplayTypes(usageData: nil, codexUsageData: codex)
-                    .filter { $0.provider == .codex }
-                codexRowCount = max(codexTypes.count, 1)
-            } else {
-                codexRowCount = 2
-            }
-            let maxRows = max(claudeRowCount, codexRowCount)
-            let rowsHeight = CGFloat(maxRows) * rowHeight + CGFloat(max(0, maxRows - 1)) * spacing
-            return NSSize(width: 580, height: baseHeight + rowsHeight)
-        }
-
-        let shouldUseCodexOnlyLayout = (!settings.hasValidCredentials && settings.hasValidCodexCredentials)
-            || (usageData == nil && (codexUsageData != nil || codexErrorMessage != nil))
-        if shouldUseCodexOnlyLayout {
-            let activeCount: Int
-            if let codex = codexUsageData {
-                activeCount = settings.getActiveDisplayTypes(usageData: nil, codexUsageData: codex)
-                    .filter { $0.provider == .codex }
-                    .count
-            } else {
-                activeCount = 0
-            }
-            let rowCount = activeCount == 1 ? 2 : max(activeCount, codexUsageData == nil ? 0 : 1)
-            let rowsHeight = CGFloat(rowCount) * rowHeight + CGFloat(max(0, rowCount - 1)) * spacing
-            return NSSize(width: 290, height: baseHeight + rowsHeight)
-        }
-
-        let activeCount: Int
-        if let data = usageData {
-            activeCount = settings.getActiveDisplayTypes(usageData: data)
-                .filter { $0.provider == .claude }
-                .count
-        } else {
-            activeCount = 0
-        }
-        let rowCount = activeCount == 1 ? 2 : activeCount
-        let rowsHeight = CGFloat(rowCount) * rowHeight + CGFloat(max(0, rowCount - 1)) * spacing
-        return NSSize(width: 290, height: baseHeight + rowsHeight)
+        let rowCount = PopoverLayout.rowCount(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            codexErrorMessage: codexErrorMessage,
+            graphDisplayType: settings.graphDisplayType
+        )
+        return NSSize(width: PopoverLayout.width, height: PopoverLayout.height(rowCount: rowCount))
     }
 
     /// 显示更新通知（如果需要）
@@ -414,6 +399,12 @@ class MenuBarManager: ObservableObject {
     /// 开始数据刷新
     func startRefreshing() {
         dataManager.startRefreshing()
+    }
+
+    /// 幂等地确保有凭据时定时刷新处于运行状态；若定时器已在运行则不重复启动（见 Phase 04）
+    func ensureRefreshingIfCredentialed() {
+        guard settings.hasAnyValidCredentials else { return }
+        dataManager.startRefreshingIfNeeded()
     }
     
     // MARK: - Settings Window
@@ -497,11 +488,7 @@ class MenuBarManager: ObservableObject {
                 NSApp.setActivationPolicy(.accessory)
 
                 self?.settingsWindow = nil
-                if self?.settings.hasAnyValidCredentials == true
-                    && self?.usageData == nil
-                    && self?.codexUsageData == nil {
-                    self?.startRefreshing()
-                }
+                self?.ensureRefreshingIfCredentialed()
             }
 
             // 添加窗口获得焦点观察者 - 当设置窗口成为 key window 时关闭 popover

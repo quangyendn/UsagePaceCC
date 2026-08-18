@@ -35,6 +35,8 @@
 "usage.refresh_cooldown" = "Please wait a moment";
 "usage.run_diagnostic" = "Run Diagnostic";
 "usage.codex_title" = "Codex Usage";
+"usage.codex_circular_unsupported" = "Codex usage is shown in Linear graph mode.";
+"usage.switch_to_linear" = "Switch to Linear";
 
 // MARK: - Settings - Tabs
 "settings.tab.general" = "General";
@@ -87,6 +89,27 @@
 "settings.auth.show_password" = "Show";
 "settings.auth.hide_password" = "Hide";
 "settings.auth.manual_input_claude_only_help" = "Claude only: manual Session Key input is not supported for Codex.";
+
+// MARK: - Settings - Auth - Codex Data Source (dual-source picker, plan.md D8'/D9/D12/D13)
+"settings.auth.codex_source_title" = "Codex Data Source";
+"settings.auth.codex_source_cli" = "Codex CLI";
+"settings.auth.codex_source_browser" = "Browser Session";
+"settings.auth.codex_cli_detected" = "Signed in";
+"settings.auth.codex_cli_expired" = "Needs refreshing";
+"settings.auth.codex_cli_expired_hint" = "Codex CLI sign-in needs refreshing. Run any `codex` command in Terminal — UsagePaceCC never modifies your CLI sign-in.";
+"settings.auth.codex_account_mismatch" = "Codex CLI and Browser Session are signed in to different ChatGPT accounts. Only the selected source feeds the graph.";
+"settings.auth.codex_cli_not_detected" = "Not signed in";
+"settings.auth.codex_cli_malformed" = "Credentials unreadable";
+"settings.auth.codex_cli_hint" = "Run `codex login` in Terminal, then re-scan.";
+"settings.auth.codex_rescan" = "Re-scan";
+"settings.auth.codex_source_active" = "Active";
+"settings.auth.codex_source_fallback" = "%@ is not available — using %@.";
+"settings.auth.codex_cli_opt_in_title" = "Codex CLI detected";
+"settings.auth.codex_cli_opt_in_hint" = "Enable to track Codex usage with your existing `codex login` session. Until you do, nothing is read or sent.";
+"settings.auth.codex_cli_enabled_missing" = "Enabled, but no CLI sign-in found right now";
+"settings.auth.codex_cli_account_changed" = "Codex CLI is now signed in to a different ChatGPT account than the one you enabled. Enable again to track it.";
+"settings.auth.codex_cli_enable" = "Enable";
+"settings.auth.codex_cli_disable" = "Disable";
 
 // MARK: - Settings - About
 "settings.about.version" = "Version %@";
@@ -180,6 +203,14 @@
 "error.unauthorized" = "Authentication failed, please check your credentials";
 "error.rate_limited" = "Too many requests, please try again later";
 
+// MARK: - Codex Source Errors (dual-source: CLI / Browser, see plan.md D9/D13)
+"error.codex_cli_expired_popover" = "Codex: run `codex` in Terminal to refresh";
+"error.codex_cli_expired_auth_tab" = "Codex CLI sign-in needs refreshing. Run any `codex` command in Terminal — UsagePaceCC never modifies your CLI sign-in.";
+"error.codex_cli_invalid_popover" = "Codex: run `codex login` in Terminal";
+"error.codex_cli_invalid_auth_tab" = "Codex CLI sign-in was rejected. Run `codex login` in Terminal, or switch to Browser Session.";
+"error.codex_browser_expired_popover" = "Codex: browser sign-in expired";
+"error.codex_browser_expired_auth_tab" = "Codex browser session expired. Sign in again, or switch to Codex CLI in Settings.";
+
 // MARK: - Launch at Login
 "launch.status.enabled" = "Enabled";
 "launch.status.disabled" = "Disabled";
@@ -253,6 +284,7 @@
 "codex_primary_limit" = "Codex 5-Hour Limit";
 "codex_secondary_limit" = "Codex 7-Day Limit";
 "codex_extra_usage" = "Codex Extra Usage";
+"codex_limit_neutral" = "Codex Limit";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5-Hour Limit";

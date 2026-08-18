@@ -93,6 +93,13 @@ class TimerManager {
         }
     }
 
+    /// 检查指定标识符的定时器当前是否已被调度（与 `isActive` 等价，命名对齐幂等启动契约，见 Phase 04）
+    /// - Parameter identifier: 定时器标识符
+    /// - Returns: 如果定时器存在且有效返回 true
+    func isScheduled(_ identifier: String) -> Bool {
+        return isActive(identifier)
+    }
+
     /// 获取当前活跃的定时器列表
     /// - Returns: 活跃定时器的标识符数组
     /// - Note: 主要用于调试和诊断

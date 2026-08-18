@@ -9,10 +9,11 @@
 import Foundation
 import OSLog
 
-/// Codex API 服务类
-/// 两步认证流程：
-///   1. GET /api/auth/session（用 session-token Cookie）→ 获取 accessToken
-///   2. GET /backend-api/wham/usage（用 Bearer token）→ 获取用量数据
+/// Codex API 服务类：路由到两个 `CodexUsageSource` 实现之一（CLI / Browser），
+/// 并保留 `validateSessionToken`（WebLogin 流程使用）。
+///
+/// 用量请求本身（凭据获取 + endpoint + 解码）都在各自的 `CodexUsageSource` 实现里；
+/// 这里只做「选哪个来源」和「取消所有请求」。
 class CodexAPIService {
 
     // MARK: - Properties
@@ -21,7 +22,10 @@ class CodexAPIService {
     private let settings = UserSettings.shared
     private let session: URLSession
 
-    /// 当前进行中的任务（最多两个：session + usage）
+    /// 恰好两个来源，字面量构建，不做注册表、不做动态扩展（见 plan.md「Dual-Source Arbitration」）
+    private let sources: [CodexSource: CodexUsageSource]
+
+    /// 当前进行中的任务（仅 `validateSessionToken` 使用；两个来源各自维护自己的任务列表）
     private var activeTasks: [URLSessionDataTask] = []
 
     // MARK: - Initialization
@@ -34,12 +38,17 @@ class CodexAPIService {
         configuration.httpShouldSetCookies = true
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: configuration)
+        self.sources = [
+            .cli: CodexCLIUsageSource(),
+            .browser: CodexBrowserUsageSource()
+        ]
     }
 
     // MARK: - Public Methods
 
-    /// 获取 Codex 用量（两步：session → usage）
-    /// - Parameter completion: 成功返回 CodexUsageData，失败返回 Error
+    /// 获取 Codex 用量：路由到 `settings.effectiveCodexSource` 对应的来源。
+    /// - Important: 从不自动切换来源（D9）。失败时的错误会带上来源名称（`CodexSourceError`），
+    ///   同一周期内不会去尝试另一个来源——两个来源可能属于不同的 ChatGPT 账户。
     func fetchUsage(completion: @escaping (Result<CodexUsageData, Error>) -> Void) {
         #if DEBUG
         if settings.debugModeEnabled {
@@ -51,154 +60,19 @@ class CodexAPIService {
 
         cancelAllRequests()
 
-        guard settings.hasValidCodexCredentials else {
-            completion(.failure(UsageError.noCredentials))
+        guard let effectiveSource = settings.effectiveCodexSource,
+              let usageSource = sources[effectiveSource] else {
+            DispatchQueue.main.async { completion(.failure(UsageError.noCredentials)) }
             return
         }
 
-        let sessionToken = settings.codexSessionToken
+        Logger.api.debug("Codex: 使用来源 \(effectiveSource.rawValue, privacy: .public)")
 
-        fetchAccessToken(sessionToken: sessionToken) { [weak self] result in
-            guard let self = self else { return }
-
-            switch result {
-            case .failure(let error):
-                DispatchQueue.main.async { completion(.failure(error)) }
-
-            case .success(let accessToken):
-                self.fetchWhamUsage(accessToken: accessToken) { usageResult in
-                    DispatchQueue.main.async { completion(usageResult) }
-                }
+        usageSource.fetchUsage(session: session) { result in
+            DispatchQueue.main.async {
+                completion(result.mapError { CodexSourceError(source: effectiveSource, underlying: $0) })
             }
         }
-    }
-
-    // MARK: - Private: Step 1 — Session → accessToken
-
-    /// 第一步：用 session-token Cookie 换取 accessToken
-    private func fetchAccessToken(sessionToken: String, completion: @escaping (Result<String, Error>) -> Void) {
-        guard let url = URL(string: "\(baseURL)/api/auth/session") else {
-            completion(.failure(UsageError.invalidURL))
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.assumesHTTP3Capable = false
-        CodexAPIHeaderBuilder.applySessionHeaders(to: &request, sessionToken: sessionToken)
-
-        let task = session.dataTask(with: request) { data, response, error in
-            if let error = error {
-                Logger.api.debug("Codex session error: \(error.localizedDescription)")
-                completion(.failure(UsageError.networkError))
-                return
-            }
-
-            guard let data = data else {
-                completion(.failure(UsageError.noData))
-                return
-            }
-
-            if let jsonString = String(data: data, encoding: .utf8) {
-                Logger.api.debug("Codex session response received: \(data.count) bytes")
-                if jsonString.contains("<!DOCTYPE html>") || jsonString.contains("<html") {
-                    completion(.failure(UsageError.cloudflareBlocked))
-                    return
-                }
-            }
-
-            if let httpResponse = response as? HTTPURLResponse {
-                Logger.api.debug("Codex session HTTP status: \(httpResponse.statusCode)")
-                switch httpResponse.statusCode {
-                case 200...299: break
-                case 401: completion(.failure(UsageError.unauthorized)); return
-                case 403: completion(.failure(UsageError.cloudflareBlocked)); return
-                case 429: completion(.failure(UsageError.rateLimited)); return
-                default:
-                    completion(.failure(UsageError.httpError(statusCode: httpResponse.statusCode)))
-                    return
-                }
-            }
-
-            let decoder = JSONDecoder()
-            do {
-                let sessionResponse = try decoder.decode(CodexSessionResponse.self, from: data)
-                guard let accessToken = sessionResponse.accessToken, !accessToken.isEmpty else {
-                    Logger.api.error("Codex session response missing accessToken")
-                    completion(.failure(UsageError.sessionExpired))
-                    return
-                }
-                completion(.success(accessToken))
-            } catch {
-                Logger.api.debug("Codex session decode error: \(error.localizedDescription)")
-                completion(.failure(UsageError.decodingError))
-            }
-        }
-
-        activeTasks.append(task)
-        task.resume()
-    }
-
-    // MARK: - Private: Step 2 — accessToken → usage
-
-    /// 第二步：用 Bearer accessToken 查询用量
-    private func fetchWhamUsage(accessToken: String, completion: @escaping (Result<CodexUsageData, Error>) -> Void) {
-        guard let url = URL(string: "\(baseURL)/backend-api/wham/usage") else {
-            completion(.failure(UsageError.invalidURL))
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.assumesHTTP3Capable = false
-        CodexAPIHeaderBuilder.applyUsageHeaders(to: &request, accessToken: accessToken)
-
-        let task = session.dataTask(with: request) { data, response, error in
-            if let error = error {
-                Logger.api.debug("Codex usage error: \(error.localizedDescription)")
-                completion(.failure(UsageError.networkError))
-                return
-            }
-
-            guard let data = data else {
-                completion(.failure(UsageError.noData))
-                return
-            }
-
-            if let jsonString = String(data: data, encoding: .utf8) {
-                Logger.api.debug("Codex usage response received: \(data.count) bytes")
-                if jsonString.contains("<!DOCTYPE html>") || jsonString.contains("<html") {
-                    completion(.failure(UsageError.cloudflareBlocked))
-                    return
-                }
-            }
-
-            if let httpResponse = response as? HTTPURLResponse {
-                Logger.api.debug("Codex usage HTTP status: \(httpResponse.statusCode)")
-                switch httpResponse.statusCode {
-                case 200...299: break
-                case 401: completion(.failure(UsageError.unauthorized)); return
-                case 403: completion(.failure(UsageError.cloudflareBlocked)); return
-                case 429: completion(.failure(UsageError.rateLimited)); return
-                default:
-                    completion(.failure(UsageError.httpError(statusCode: httpResponse.statusCode)))
-                    return
-                }
-            }
-
-            let decoder = JSONDecoder()
-            do {
-                let usageResponse = try decoder.decode(CodexUsageResponse.self, from: data)
-                let usageData = usageResponse.toCodexUsageData()
-                completion(.success(usageData))
-            } catch {
-                Logger.api.debug("Codex usage decode error: \(error.localizedDescription)")
-                completion(.failure(UsageError.decodingError))
-            }
-        }
-
-        activeTasks.append(task)
-        task.resume()
     }
 
     // MARK: - Validation (used by WebLoginCoordinator)
@@ -287,8 +161,8 @@ class CodexAPIService {
         let balanceValue = balance.doubleValue
 
         return CodexUsageData(
-            primary: .init(percentage: Double(settings.debugCodexPrimaryPercentage), resetsAt: primaryResetAt),
-            secondary: .init(percentage: Double(settings.debugCodexSecondaryPercentage), resetsAt: secondaryResetAt),
+            primary: .init(percentage: Double(settings.debugCodexPrimaryPercentage), resetsAt: primaryResetAt, windowSeconds: 5 * 3600),
+            secondary: .init(percentage: Double(settings.debugCodexSecondaryPercentage), resetsAt: secondaryResetAt, windowSeconds: 7 * 24 * 3600),
             extraUsage: CodexExtraUsageData(
                 hasCredits: true,
                 unlimited: false,
@@ -318,6 +192,62 @@ extension CodexAPIService: UsageProvider {
     func cancelAllRequests() {
         activeTasks.forEach { $0.cancel() }
         activeTasks.removeAll()
+        sources.values.forEach { $0.cancel() }
         Logger.api.debug("Codex: 已取消所有网络请求")
+    }
+}
+
+// MARK: - CodexSourceError
+
+/// 包装某个 Codex 来源的失败，让错误信息带上是哪个来源出的问题。
+/// - Important: 从不自动切换来源（D9/D13）——错误信息只负责让用户看清楚该切哪个，
+///   本身不做任何切换动作。措辞按 phase-03 的验证表逐字实现，不在实现期改写。
+struct CodexSourceError: LocalizedError {
+    let source: CodexSource
+    let underlying: Error
+
+    /// 弹出框用的单行文案
+    var errorDescription: String? {
+        if let cliError = underlying as? CodexCLIAuthError {
+            return Self.cliPopoverMessage(for: cliError)
+        }
+        if let usageError = underlying as? UsageError {
+            switch (source, usageError) {
+            case (.cli, .unauthorized):
+                return L.Error.codexCLIInvalidPopover
+            case (.browser, .unauthorized), (.browser, .sessionExpired):
+                return L.Error.codexBrowserExpiredPopover
+            default:
+                break
+            }
+        }
+        return underlying.localizedDescription
+    }
+
+    /// Auth 标签页用的完整文案（P07 消费）；此处先按验证表把措辞定死，避免实现期被改写
+    var authTabDescription: String? {
+        if let cliError = underlying as? CodexCLIAuthError, case .tokenExpired = cliError {
+            return L.Error.codexCLIExpiredAuthTab
+        }
+        if let usageError = underlying as? UsageError {
+            switch (source, usageError) {
+            case (.cli, .unauthorized):
+                return L.Error.codexCLIInvalidAuthTab
+            case (.browser, .unauthorized), (.browser, .sessionExpired):
+                return L.Error.codexBrowserExpiredAuthTab
+            default:
+                break
+            }
+        }
+        return errorDescription
+    }
+
+    private static func cliPopoverMessage(for error: CodexCLIAuthError) -> String {
+        if case .tokenExpired = error {
+            return L.Error.codexCLIExpiredPopover
+        }
+        // 未知/非过期的本地凭据错误（未安装、沙盒拒绝、无法解析等）：不在验证表范围内，
+        // 沿用 CodexCLIAuthError 自身的 LocalizedError 文案。
+        return error.localizedDescription
     }
 }

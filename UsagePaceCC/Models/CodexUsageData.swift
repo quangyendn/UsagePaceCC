@@ -24,6 +24,15 @@ struct CodexUsageData: Sendable {
         let percentage: Double
         /// 重置时间，nil 表示尚未开始使用
         let resetsAt: Date?
+        /// 窗口时长（秒），来自 wire 的 `limit_window_seconds`；P05 图形据此计算起点，
+        /// 不再硬编码 5 小时窗口
+        let windowSeconds: TimeInterval?
+
+        init(percentage: Double, resetsAt: Date?, windowSeconds: TimeInterval? = nil) {
+            self.percentage = percentage
+            self.resetsAt = resetsAt
+            self.windowSeconds = windowSeconds
+        }
     }
 }
 
@@ -127,10 +136,15 @@ nonisolated struct CodexUsageResponse: Codable, Sendable {
             return nil
         }
 
+        func resolvedWindowSeconds(for window: Window) -> TimeInterval? {
+            guard let seconds = window.limit_window_seconds else { return nil }
+            return TimeInterval(seconds)
+        }
+
         let primary: CodexUsageData.LimitData? = {
             guard let w = rate_limit?.primary_window else { return nil }
             let resetsAt = resolvedResetDate(for: w)
-            return .init(percentage: w.used_percent, resetsAt: resetsAt)
+            return .init(percentage: w.used_percent, resetsAt: resetsAt, windowSeconds: resolvedWindowSeconds(for: w))
         }()
 
         let secondary: CodexUsageData.LimitData? = {
@@ -138,7 +152,7 @@ nonisolated struct CodexUsageResponse: Codable, Sendable {
             // 如果 used_percent 为 0 且无重置信息，视为无效数据
             if w.used_percent == 0 && w.reset_at == nil && w.reset_after_seconds == nil { return nil }
             let resetsAt = resolvedResetDate(for: w)
-            return .init(percentage: w.used_percent, resetsAt: resetsAt)
+            return .init(percentage: w.used_percent, resetsAt: resetsAt, windowSeconds: resolvedWindowSeconds(for: w))
         }()
 
         let extraUsage = credits.map {
