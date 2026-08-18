@@ -95,3 +95,5 @@ ClaudeUsageMonitor
 # Local agent tooling
 .serena/
 .codex/
+# Planning artifacts (local only)
+plans/

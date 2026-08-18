@@ -73,6 +73,13 @@ struct AuthSettingsView: View {
             }
             .padding()
         }
+        // 打开 Auth 页时重新探测一次 CLI 凭据（只读，D10）。Re-scan 按钮长在 `sourceRow(.cli)` 里，
+        // 而 opt-in 未完成时那一行根本不渲染；纯 Codex CLI 用户又没有任何 Claude 凭据，
+        // `ensureRefreshingIfCredentialed()` 直接返回、定时器不启动，于是 `fetchUsage()` 里的
+        // 周期性探测也不会跑 —— 不在这里探测的话，`codex login` 之后必须重启 App 才看得到 opt-in。
+        .onAppear {
+            settings.refreshCodexCLIState()
+        }
         .alert(L.Account.deleteConfirmTitle, isPresented: $showDeleteConfirmation) {
             Button(L.Account.cancel, role: .cancel) {}
             Button(L.Account.delete, role: .destructive) {
@@ -98,7 +105,7 @@ struct AuthSettingsView: View {
     // MARK: - Account List View
 
     private var accountListView: some View {
-        let hasCodex = !settings.codexAccounts.isEmpty
+        let hasCodex = settings.hasAnyCodexSource
         let hasBothProviders = !settings.accounts.isEmpty && hasCodex
 
         return SettingCard(
@@ -108,7 +115,7 @@ struct AuthSettingsView: View {
             hint: ""
         ) {
             VStack(alignment: .leading, spacing: 12) {
-                if settings.accounts.isEmpty && settings.codexAccounts.isEmpty {
+                if settings.accounts.isEmpty && !settings.hasAnyCodexSource {
                     // 无账户时的提示
                     VStack(spacing: 12) {
                         Image(systemName: "person.crop.circle.badge.plus")
@@ -143,9 +150,287 @@ struct AuthSettingsView: View {
                     }
                 }
 
+                // Codex 双来源选择区（D8'/D9）：仅当至少一个来源已配置、或用户曾显式启用过
+                // CLI 时出现，保证纯 Claude 用户看到的 Auth 页与改动前完全一致（区块整体缺席，
+                // 而非空区块）。
+                // - Important: `codexCLIEnabled` 单独成一个条件。已 opt-in 但凭据文件暂时不在
+                //   （`codex logout`、换机器、目录被删）时，前两个条件都是 false；若区块跟着消失，
+                //   用户既看不到自己给过同意，也没有 Disable 按钮可以撤回。
+                if settings.isCLISourceConfigured || settings.isBrowserSourceConfigured || settings.codexCLIEnabled {
+                    codexSourceSection
+                } else if settings.isCodexCLIOptInPending {
+                    // 只检测到 CLI、用户还没启用：只多出一行 opt-in 提示，没有区块标题、
+                    // 没有单选、没有账户分组 —— 没装 Codex CLI 的用户这里依然什么都看不到。
+                    cliOptInRow
+                }
+
                 // 添加账户入口
                 addAccountActionsView
             }
+        }
+    }
+
+    // MARK: - Codex Data Source Section (D8'/D9/D12/D13)
+
+    /// "Codex Data Source" 区块：CLI / Browser 两行 + 单选 + 回退提示 + 账户不一致警告。
+    /// 放在既有账户列表卡片内，紧邻 `addAccountActionsView` 之上（phase-07 Implementation Step 3）。
+    private var codexSourceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L.SettingsAuth.codexSourceTitle)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.secondary)
+                .padding(.top, 4)
+
+            VStack(spacing: 2) {
+                // CLI 已检测到但未启用时，这一行不是可选来源，而是 opt-in 入口：
+                // 选中一个未启用的来源没有任何意义，radio 会变成死选项。
+                if settings.isCodexCLIOptInPending {
+                    cliOptInRow
+                } else {
+                    sourceRow(.cli)
+                }
+                sourceRow(.browser)
+            }
+
+            fallbackNote
+
+            accountMismatchWarning
+        }
+    }
+
+    /// CLI 一次性 opt-in 行：检测到 `~/.codex/auth.json`，但用户尚未同意本 App 使用它。
+    /// 在用户点 Enable 之前，App 不会用 CLI 凭据发起任何网络请求，也不会改动菜单栏 / 弹窗 / 显示偏好。
+    private var cliOptInRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "terminal")
+                .foregroundColor(.secondary)
+                .font(.system(size: 14))
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L.SettingsAuth.codexCliOptInTitle)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+
+                Text(L.SettingsAuth.codexCliOptInHint)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // 同意已被自动撤回：磁盘上的 CLI 凭据换成了另一个 ChatGPT 账户。
+                // 账户 id 本身永不展示，只说明「换了个账户」。
+                if settings.codexCLIAccountChanged {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        Text(L.SettingsAuth.codexCliAccountChanged)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            Spacer()
+
+            Button(action: {
+                settings.setCodexCLIEnabled(true)
+            }) {
+                Text(L.SettingsAuth.codexCliEnable)
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+    }
+
+    /// 单个来源行：单选 + 图标 + 标题 + 状态行 + 尾随控件（CLI 的 Re-scan / Disable）+ Active 标记。
+    /// 复用 `accountRow` 的单选视觉习惯（largecircle.fill.circle / circle），而非 `Picker`，
+    /// 以便保留每行的富文本内容（phase-07 Architecture）。
+    private func sourceRow(_ source: CodexSource) -> some View {
+        let isSelected = settings.codexSource == source
+        let isActive = settings.effectiveCodexSource == source
+        let accentColor: Color = Color(red: 45 / 255.0, green: 212 / 255.0, blue: 191 / 255.0)
+
+        return Button(action: {
+            settings.codexSource = source
+        }) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .foregroundColor(isSelected ? accentColor : .secondary)
+                    .font(.system(size: 14))
+                    .padding(.top, 3)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(sourceTitle(source))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+
+                        if isActive {
+                            Text(L.SettingsAuth.codexSourceActive)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(accentColor)
+                                .cornerRadius(4)
+                        }
+                    }
+
+                    Text(sourceStateLine(source))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if let hint = sourceHint(source) {
+                        Text(hint)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Spacer()
+
+                if source == .cli {
+                    Button(action: {
+                        settings.refreshCodexCLIState()
+                    }) {
+                        Text(L.SettingsAuth.codexRescan)
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+
+                    // 关闭 opt-in：一个刷新周期内 Codex 会从图表 / 菜单栏 / 弹窗中完全消失
+                    if settings.codexCLIEnabled {
+                        Button(action: {
+                            settings.setCodexCLIEnabled(false)
+                        }) {
+                            Text(L.SettingsAuth.codexCliDisable)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? accentColor.opacity(0.08) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sourceTitle(_ source: CodexSource) -> String {
+        switch source {
+        case .cli: return L.SettingsAuth.codexSourceCli
+        case .browser: return L.SettingsAuth.codexSourceBrowser
+        }
+    }
+
+    /// 状态行文案：CLI 的 5 种 `CodexCLIAuthError`（P02）中，`.notInstalled`（缺失）与
+    /// `.sandboxDenied`/`.malformed`/`.noAccessToken`（存在但不可读/不可解析）使用不同文案，
+    /// 不合并成一句话；`.tokenExpired`（D13）单独一行，既不等同"未签入"也不等同"不可读"。
+    private func sourceStateLine(_ source: CodexSource) -> String {
+        switch source {
+        case .cli:
+            // 已 opt-in 但当前读不到凭据文件：既不是"没启用"也不是"能用"，单独一行说清楚，
+            // 免得用户以为自己的同意被悄悄丢了。修复方式由 `sourceHint` 给出。
+            if settings.codexCLIEnabled && !settings.codexCLIDetected {
+                return L.SettingsAuth.codexCliEnabledMissing
+            }
+            if let error = settings.codexCLIError {
+                switch error {
+                case .tokenExpired:
+                    return L.SettingsAuth.codexCliExpired
+                case .notInstalled:
+                    return L.SettingsAuth.codexCliNotDetected
+                case .sandboxDenied, .malformed, .noAccessToken:
+                    return L.SettingsAuth.codexCliMalformed
+                }
+            }
+            if settings.codexCLIDetected {
+                var line = L.SettingsAuth.codexCliDetected
+                if let label = settings.codexCLIAccountLabel, !label.isEmpty {
+                    line += " · \(label)"
+                }
+                if let plan = settings.codexCLIPlanType, !plan.isEmpty {
+                    line += " (\(plan))"
+                }
+                return line
+            }
+            return L.SettingsAuth.codexCliNotDetected
+
+        case .browser:
+            if settings.isBrowserSourceConfigured, let account = settings.currentCodexAccount {
+                return account.displayName
+            }
+            return L.SettingsAuth.codexCliNotDetected
+        }
+    }
+
+    /// 尾随提示：仅 CLI 行在"未安装"或"已过期"时展示；权限/解析错误不建议用户瞎猜修复方式。
+    private func sourceHint(_ source: CodexSource) -> String? {
+        guard source == .cli, let error = settings.codexCLIError else { return nil }
+        switch error {
+        case .tokenExpired:
+            return L.SettingsAuth.codexCliExpiredHint
+        case .notInstalled:
+            return L.SettingsAuth.codexCliHint
+        case .sandboxDenied, .malformed, .noAccessToken:
+            return nil
+        }
+    }
+
+    /// `effectiveCodexSource` 因用户偏好来源不可用而回退时的提示（可用性说明，非失败提示）。
+    @ViewBuilder
+    private var fallbackNote: some View {
+        if settings.codexSourceIsFallback, let effective = settings.effectiveCodexSource {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                Text(String(format: L.SettingsAuth.codexSourceFallback, sourceTitle(settings.codexSource), sourceTitle(effective)))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    /// D12：两个来源都已配置，且 ChatGPT account id 不同时的提醒。账户 id 本身永不展示。
+    /// - Important: 两个 id 都非 nil 且不相等时才触发；任一为 nil（尚未成功请求过、解析失败）
+    ///   一律保持沉默，不做误判性提示。
+    @ViewBuilder
+    private var accountMismatchWarning: some View {
+        if settings.isCLISourceConfigured, settings.isBrowserSourceConfigured,
+           let cliId = settings.codexCLIChatGPTAccountId,
+           let browserId = settings.codexBrowserChatGPTAccountId,
+           cliId != browserId {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                Text(L.SettingsAuth.codexAccountMismatch)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .background(Color.orange.opacity(0.1))
+            .cornerRadius(6)
+            .padding(.top, 2)
         }
     }
 

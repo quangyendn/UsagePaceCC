@@ -71,6 +71,8 @@ enum L {
         static var refreshCooldown: String { localized("usage.refresh_cooldown") }
         static var runDiagnostic: String { localized("usage.run_diagnostic") }
         static var codexTitle: String { localized("usage.codex_title") }
+        static var codexCircularUnsupported: String { localized("usage.codex_circular_unsupported") }
+        static var switchToLinear: String { localized("usage.switch_to_linear") }
     }
     
     // MARK: - Settings Tabs
@@ -123,6 +125,29 @@ enum L {
         static var showPassword: String { localized("settings.auth.show_password") }
         static var hidePassword: String { localized("settings.auth.hide_password") }
         static var manualInputClaudeOnlyHelp: String { localized("settings.auth.manual_input_claude_only_help") }
+
+        // Codex Data Source section (dual-source picker, plan.md D8'/D9/D12/D13)
+        static var codexSourceTitle: String { localized("settings.auth.codex_source_title") }
+        static var codexSourceCli: String { localized("settings.auth.codex_source_cli") }
+        static var codexSourceBrowser: String { localized("settings.auth.codex_source_browser") }
+        static var codexCliDetected: String { localized("settings.auth.codex_cli_detected") }
+        static var codexCliExpired: String { localized("settings.auth.codex_cli_expired") }
+        static var codexCliExpiredHint: String { localized("settings.auth.codex_cli_expired_hint") }
+        static var codexAccountMismatch: String { localized("settings.auth.codex_account_mismatch") }
+        static var codexCliNotDetected: String { localized("settings.auth.codex_cli_not_detected") }
+        static var codexCliMalformed: String { localized("settings.auth.codex_cli_malformed") }
+        static var codexCliHint: String { localized("settings.auth.codex_cli_hint") }
+        static var codexRescan: String { localized("settings.auth.codex_rescan") }
+        static var codexSourceActive: String { localized("settings.auth.codex_source_active") }
+        static var codexSourceFallback: String { localized("settings.auth.codex_source_fallback") }
+
+        // Codex CLI explicit opt-in (detection alone must not activate the CLI source)
+        static var codexCliOptInTitle: String { localized("settings.auth.codex_cli_opt_in_title") }
+        static var codexCliOptInHint: String { localized("settings.auth.codex_cli_opt_in_hint") }
+        static var codexCliEnabledMissing: String { localized("settings.auth.codex_cli_enabled_missing") }
+        static var codexCliAccountChanged: String { localized("settings.auth.codex_cli_account_changed") }
+        static var codexCliEnable: String { localized("settings.auth.codex_cli_enable") }
+        static var codexCliDisable: String { localized("settings.auth.codex_cli_disable") }
     }
     
     // MARK: - Settings About
@@ -328,6 +353,14 @@ enum L {
         static var noOrganizationsFound: String { localized("error.no_organizations_found") }
         static var unauthorized: String { localized("error.unauthorized") }
         static var rateLimited: String { localized("error.rate_limited") }
+
+        // Codex dual-source errors (plan.md D9/D13) — wording is verbatim per phase-03, do not paraphrase
+        static var codexCLIExpiredPopover: String { localized("error.codex_cli_expired_popover") }
+        static var codexCLIExpiredAuthTab: String { localized("error.codex_cli_expired_auth_tab") }
+        static var codexCLIInvalidPopover: String { localized("error.codex_cli_invalid_popover") }
+        static var codexCLIInvalidAuthTab: String { localized("error.codex_cli_invalid_auth_tab") }
+        static var codexBrowserExpiredPopover: String { localized("error.codex_browser_expired_popover") }
+        static var codexBrowserExpiredAuthTab: String { localized("error.codex_browser_expired_auth_tab") }
     }
 
     // MARK: - Diagnostics
@@ -399,6 +432,22 @@ enum L {
         static var codexPrimary: String { localized("codex_primary_limit") }
         static var codexSecondary: String { localized("codex_secondary_limit") }
         static var codexExtraUsage: String { localized("codex_extra_usage") }
+
+        /// Window-derived Codex legend label (P05). Never trust `.codexPrimary`'s hardcoded
+        /// "Codex 5-Hour Limit" for a window whose actual length is unknown — this account has been
+        /// observed with `limit_window_seconds = 604800` (7 days) on the *primary* window.
+        /// - Parameter windowSeconds: seconds from `CodexUsageData.LimitData.windowSeconds`, nil-safe.
+        static func codexWindowName(windowSeconds: TimeInterval?) -> String {
+            guard let windowSeconds else { return localized("codex_limit_neutral") }
+            let minutes = windowSeconds / 60
+            if minutes == 300 {
+                return localized("codex_primary_limit")
+            } else if minutes == 10080 {
+                return localized("codex_secondary_limit")
+            } else {
+                return localized("codex_limit_neutral")
+            }
+        }
     }
 
     // MARK: - Display Options (v2.0.0)
@@ -542,18 +591,28 @@ enum L {
     /// 本地化字符串辅助方法
     /// 根据用户设置的语言返回对应的本地化字符串
     /// - Parameter key: 本地化字符串的键名
-    /// - Returns: 对应语言的本地化字符串
+    /// - Returns: 对应语言的本地化字符串；该语言尚未回填时回退到 en.lproj
     private static func localized(_ key: String) -> String {
         // 从UserSettings获取用户选择的语言
         let language = UserSettings.shared.language.rawValue
-        
+
         // 获取对应语言的bundle
         guard let path = Bundle.main.path(forResource: language, ofType: "lproj"),
               let bundle = Bundle(path: path) else {
             // 如果找不到对应语言，使用系统默认
             return NSLocalizedString(key, comment: "")
         }
-        
-        return NSLocalizedString(key, bundle: bundle, comment: "")
+
+        let value = NSLocalizedString(key, bundle: bundle, comment: "")
+        guard value == key, language != "en" else { return value }
+
+        // 缺失时 NSLocalizedString 原样返回 key。新增字符串本轮只有 en（fr/ja/ko/zh 回填是
+        // 已记录的延后任务），若直接返回就会把 "settings.auth.codex_source_title" 这类 key
+        // 当作 UI 文案显示给非英文用户。回退到 en.lproj 再取一次。
+        guard let englishPath = Bundle.main.path(forResource: "en", ofType: "lproj"),
+              let englishBundle = Bundle(path: englishPath) else {
+            return value
+        }
+        return NSLocalizedString(key, bundle: englishBundle, comment: "")
     }
 }

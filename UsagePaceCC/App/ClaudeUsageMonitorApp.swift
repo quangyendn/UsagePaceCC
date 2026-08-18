@@ -51,12 +51,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 请求通知权限
         NotificationManager.shared.requestPermission()
 
+        // 探测 Codex CLI 凭据文件（只读，见 D10），使仅配置了 CLI 的用户不会被误判为未登录。
+        // - Important: 必须在 `MenuBarManager()` **之前**。`codexCLIDetected` 初值为 false，
+        //   对已 opt-in 的用户来说 `isCLISourceConfigured` 冷启动同样是 false→true，
+        //   冷启动首探必定是 false→true 的跳变并发出 `.accountChanged`；若 MenuBarManager 已经
+        //   订阅上了，就会先触发一次 `fetchCodexOnly()`，紧接着 `ensureRefreshingIfCredentialed()`
+        //   再发一次 —— 而 `CodexAPIService.fetchUsage` 开头会 cancelAllRequests，后一次把前一次
+        //   打断成 `URLError.cancelled`，启动瞬间闪一行错误。这里先探测，让冷启动只发一次请求。
+        //   （`DataRefreshManager.isSyncingCodexCLIState` 只覆盖 `fetchUsage()` 内部的同步，管不到这里。）
+        settings.refreshCodexCLIState()
+
         menuBarManager = MenuBarManager()
 
         if settings.isFirstLaunch || !settings.hasAnyValidCredentials {
             showWelcomeWindow()
         } else {
-            menuBarManager.startRefreshing()
+            menuBarManager.ensureRefreshingIfCredentialed()
         }
 
         // 使用 Combine 订阅通知，自动管理生命周期
@@ -116,9 +126,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeWindow?.close()
         welcomeWindow = nil
 
-        if settings.hasAnyValidCredentials {
-            menuBarManager.startRefreshing()
-        }
+        menuBarManager.ensureRefreshingIfCredentialed()
     }
     
     /// 应用即将退出时调用

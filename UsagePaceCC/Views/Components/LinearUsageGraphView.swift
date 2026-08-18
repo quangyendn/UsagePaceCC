@@ -7,14 +7,29 @@
 //
 
 import SwiftUI
+import OSLog
 
 /// Linear graph view showing usage pace with ideal pace reference line
 /// X-axis: Normalized time (0 = session start, 1 = reset time)
 /// Y-axis: Usage percentage (0-100%)
 struct LinearUsageGraphView: View {
     let usageData: UsageData?
+    /// Codex usage data (P05). Defaulted nil so existing/preview call sites keep compiling unchanged.
+    let codexUsageData: CodexUsageData?
     let activeDisplayTypes: [LimitType]
     let isRefreshing: Bool
+
+    init(
+        usageData: UsageData?,
+        codexUsageData: CodexUsageData? = nil,
+        activeDisplayTypes: [LimitType],
+        isRefreshing: Bool
+    ) {
+        self.usageData = usageData
+        self.codexUsageData = codexUsageData
+        self.activeDisplayTypes = activeDisplayTypes
+        self.isRefreshing = isRefreshing
+    }
 
     // MARK: - Constants
 
@@ -25,11 +40,24 @@ struct LinearUsageGraphView: View {
     private let paceLineWidth: CGFloat = 1.5
     private let dotRadius: CGFloat = 5
 
+    /// One resolved point, provider-agnostic. Both Claude (`usageData`) and Codex (`codexUsageData`)
+    /// funnel through `resolve(_:)` into this shape so drawing code never branches on provider again.
+    private struct ResolvedPoint {
+        let percentage: Double
+        let resetsAt: Date?
+        /// Window length in seconds, when known. Claude points leave this nil (their window length is
+        /// looked up from the static 5h/7d table in `calculateElapsedTimeRatio`); Codex points carry it
+        /// from `CodexUsageData.LimitData.windowSeconds` (wire: `limit_window_seconds`) because Codex
+        /// windows are not reliably 5h/7d — this account's measured primary window is 604800s (7 days).
+        let windowSeconds: TimeInterval?
+        let color: Color
+    }
+
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            if let data = usageData, !isRefreshing {
+            if (usageData != nil || codexUsageData != nil), !isRefreshing {
                 // Graph content
                 Canvas { context, size in
                     let drawArea = CGRect(
@@ -46,7 +74,7 @@ struct LinearUsageGraphView: View {
                     drawIdealPaceLine(context: context, in: drawArea)
 
                     // 3. Draw limit points
-                    drawLimitPoints(context: context, in: drawArea, data: data)
+                    drawLimitPoints(context: context, in: drawArea)
                 }
                 .frame(width: graphWidth, height: graphHeight)
             } else {
@@ -118,14 +146,19 @@ struct LinearUsageGraphView: View {
     }
 
     /// Draw colored dots for each active limit type with percentage labels
-    private func drawLimitPoints(context: GraphicsContext, in rect: CGRect, data: UsageData) {
-        for limitType in activeDisplayTypes {
-            guard let point = calculatePoint(for: limitType, data: data, in: rect),
-                  let limitData = getLimitData(for: limitType, data: data) else {
-                continue
-            }
+    private func drawLimitPoints(context: GraphicsContext, in rect: CGRect) {
+        // Reset per-draw; Canvas closures re-run on every redraw so this never leaks across frames.
+        var drawnLabelRects: [CGRect] = []
 
-            let color = colorForLimitType(limitType, data: data)
+        for limitType in activeDisplayTypes {
+            guard let resolved = resolve(limitType) else { continue }
+
+            let xNormalized = calculateElapsedTimeRatio(
+                resetsAt: resolved.resetsAt,
+                windowSeconds: resolved.windowSeconds,
+                limitType: limitType
+            )
+            let point = calculatePoint(percentage: resolved.percentage, xNormalized: xNormalized, in: rect)
 
             // Draw dot
             let dotRect = CGRect(
@@ -135,7 +168,7 @@ struct LinearUsageGraphView: View {
                 height: dotRadius * 2
             )
 
-            context.fill(Circle().path(in: dotRect), with: .color(color))
+            context.fill(Circle().path(in: dotRect), with: .color(resolved.color))
 
             // Draw white border for visibility
             context.stroke(
@@ -144,43 +177,74 @@ struct LinearUsageGraphView: View {
                 lineWidth: 1
             )
 
-            // Draw percentage label next to dot
+            // Draw percentage label next to dot, avoiding already-placed labels
             drawPercentageLabel(
                 context: context,
                 at: point,
-                percentage: limitData.percentage,
-                in: rect
+                percentage: resolved.percentage,
+                in: rect,
+                drawnLabelRects: &drawnLabelRects
             )
         }
     }
 
-    /// Draw percentage label near a data point
+    /// Draw percentage label near a data point, greedily avoiding overlap with previously drawn labels.
+    /// Tries top-right → below-right → top-left → below-left; if all four collide, falls back to
+    /// top-right anyway (a label is never dropped).
     private func drawPercentageLabel(
         context: GraphicsContext,
         at point: CGPoint,
         percentage: Double,
-        in rect: CGRect
+        in rect: CGRect,
+        drawnLabelRects: inout [CGRect]
     ) {
         let label = Text("\(Int(percentage))%")
             .font(.system(size: 9, weight: .semibold))
             .foregroundColor(.primary)
 
-        // Position: top-right of dot by default
-        var labelX = point.x + dotRadius + 4
-        var labelY = point.y - dotRadius - 2
+        let labelSize = CGSize(width: 28, height: 11)  // Matches the pre-existing 28pt width heuristic
+        let gap: CGFloat = 4
 
-        // Boundary check: if too close to right edge, flip to left
-        let labelWidth: CGFloat = 28  // Approximate width of "100%"
-        if labelX + labelWidth > rect.maxX {
-            labelX = point.x - dotRadius - labelWidth - 2
+        // Candidate origins (top-left corner of the label's drawn rect), in try order.
+        let candidates: [CGPoint] = [
+            CGPoint(x: point.x + dotRadius + gap, y: point.y - dotRadius - 2 - labelSize.height),   // top-right
+            CGPoint(x: point.x + dotRadius + gap, y: point.y + dotRadius + 2),                       // below-right
+            CGPoint(x: point.x - dotRadius - gap - labelSize.width, y: point.y - dotRadius - 2 - labelSize.height), // top-left
+            CGPoint(x: point.x - dotRadius - gap - labelSize.width, y: point.y + dotRadius + 2)      // below-left
+        ]
+
+        func clamped(_ origin: CGPoint) -> CGPoint {
+            var x = origin.x
+            var y = origin.y
+            if x + labelSize.width > rect.maxX { x = rect.maxX - labelSize.width }
+            if x < rect.minX { x = rect.minX }
+            if y < rect.minY { y = rect.minY }
+            if y + labelSize.height > rect.maxY { y = rect.maxY - labelSize.height }
+            return CGPoint(x: x, y: y)
         }
 
-        // If too close to top, move below dot
-        if labelY < rect.minY + 8 {
-            labelY = point.y + dotRadius + 10
+        var chosenOrigin = clamped(candidates[0])
+        var found = false
+        for candidate in candidates {
+            let origin = clamped(candidate)
+            let candidateRect = CGRect(origin: origin, size: labelSize)
+            if !drawnLabelRects.contains(where: { $0.intersects(candidateRect) }) {
+                chosenOrigin = origin
+                found = true
+                break
+            }
+        }
+        if !found {
+            // All four slots collide — draw top-right anyway per spec (never drop a label).
+            chosenOrigin = clamped(candidates[0])
         }
 
-        context.draw(label, at: CGPoint(x: labelX, y: labelY))
+        let chosenRect = CGRect(origin: chosenOrigin, size: labelSize)
+        drawnLabelRects.append(chosenRect)
+
+        // `context.draw(_:at:)` centers vertically on the baseline area; keep drawing at the label's
+        // top-left-ish anchor consistent with the original implementation's (labelX, labelY) convention.
+        context.draw(label, at: CGPoint(x: chosenOrigin.x, y: chosenOrigin.y + labelSize.height / 2))
     }
 
     // MARK: - Calculation Methods
@@ -188,15 +252,7 @@ struct LinearUsageGraphView: View {
     /// Calculate the position of a limit point on the graph
     /// X = elapsed time / total window (0 = just started, 1 = about to reset)
     /// Y = usage percentage
-    private func calculatePoint(for limitType: LimitType, data: UsageData, in rect: CGRect) -> CGPoint? {
-        let limitData = getLimitData(for: limitType, data: data)
-        guard let limit = limitData else { return nil }
-
-        let percentage = limit.percentage
-
-        // Calculate X position based on elapsed time
-        let xNormalized = calculateElapsedTimeRatio(for: limitType, resetsAt: limit.resetsAt)
-
+    private func calculatePoint(percentage: Double, xNormalized: CGFloat, in rect: CGRect) -> CGPoint {
         // Convert to canvas coordinates
         // X: 0 (left) = session start, 1 (right) = reset
         let x = rect.minX + xNormalized * rect.width
@@ -207,19 +263,40 @@ struct LinearUsageGraphView: View {
     }
 
     /// Calculate the elapsed time ratio (0 = just started, 1 = about to reset)
-    private func calculateElapsedTimeRatio(for limitType: LimitType, resetsAt: Date?) -> CGFloat {
+    /// - Parameters:
+    ///   - resetsAt: absolute reset time, if known.
+    ///   - windowSeconds: data-driven window length (Codex, from `limit_window_seconds`). When present,
+    ///     this is authoritative and the static per-`limitType` table below is skipped entirely.
+    ///   - limitType: used only as a fallback lookup when `windowSeconds` is nil (e.g. Claude points,
+    ///     which do not carry a window length on `UsageData.LimitData`).
+    private func calculateElapsedTimeRatio(
+        resetsAt: Date?,
+        windowSeconds: TimeInterval?,
+        limitType: LimitType
+    ) -> CGFloat {
         guard let resetsAt = resetsAt else {
             // If no reset time, assume just started
             return 0
         }
 
         let totalWindow: TimeInterval
-        switch limitType {
-        case .fiveHour, .codexPrimary:
-            totalWindow = 5 * 3600  // 5 hours in seconds
-        case .sevenDay, .opusWeekly, .sonnetWeekly, .extraUsage,
-             .codexSecondary, .codexExtraUsage:
-            totalWindow = 7 * 24 * 3600  // 7 days in seconds
+        if let windowSeconds, windowSeconds > 0 {
+            totalWindow = windowSeconds
+        } else {
+            // Fallback only for Claude, whose windows really are a fixed 5h/7d. Codex windows are
+            // data-driven: `limit_window_seconds` is optional on the wire, and guessing 5h for a
+            // window that is actually 7 days pins the dot to the far right. `resolve(_:)` already
+            // drops any Codex point with a known `resetsAt` but an unknown window, so the Codex
+            // cases below are unreachable — they return 0 rather than invent a window length.
+            switch limitType {
+            case .fiveHour:
+                totalWindow = 5 * 3600  // 5 hours in seconds
+            case .sevenDay, .opusWeekly, .sonnetWeekly, .extraUsage:
+                totalWindow = 7 * 24 * 3600  // 7 days in seconds
+            case .codexPrimary, .codexSecondary, .codexExtraUsage:
+                return 0
+            }
+            Logger.api.debug("LinearUsageGraphView: falling back to static window table for \(limitType.rawValue, privacy: .public) (windowSeconds was nil)")
         }
 
         let remainingTime = resetsAt.timeIntervalSinceNow
@@ -230,58 +307,94 @@ struct LinearUsageGraphView: View {
         return CGFloat(max(0, min(1, ratio)))
     }
 
-    /// Get the LimitData for a specific limit type
-    private func getLimitData(for limitType: LimitType, data: UsageData) -> UsageData.LimitData? {
-        switch limitType {
-        case .fiveHour:
-            return data.fiveHour
-        case .sevenDay:
-            return data.sevenDay
-        case .opusWeekly:
-            return data.opus
-        case .sonnetWeekly:
-            return data.sonnet
-        case .extraUsage:
-            // ExtraUsageData has different structure, convert to LimitData-like values
-            // ExtraUsage doesn't have resetsAt, so we return nil for it
-            if let extra = data.extraUsage, let percentage = extra.percentage {
-                return UsageData.LimitData(percentage: percentage, resetsAt: nil)
-            }
-            return nil
-        case .codexPrimary, .codexSecondary, .codexExtraUsage:
-            // Codex limits are not part of Claude UsageData
-            return nil
-        }
+    /// Whether a Codex window can be placed on the X axis at all.
+    /// `limit_window_seconds` is optional on the wire; without it the elapsed-time ratio is unknowable
+    /// for a window that has a reset time, and the old static 5h guess put the dot at the far right of
+    /// a 7-day window. Dropping the point is honest; a wrong point is not. A window with no `resetsAt`
+    /// is still plottable — it sits at x=0 by the same convention as `.extraUsage`, no window needed.
+    private func isPlottable(_ limit: CodexUsageData.LimitData) -> Bool {
+        limit.resetsAt == nil || (limit.windowSeconds ?? 0) > 0
     }
 
-    /// Get the color for a limit type based on its percentage
-    private func colorForLimitType(_ limitType: LimitType, data: UsageData) -> Color {
+    /// Resolve a `LimitType` into a provider-agnostic point, pulling from `usageData` for the 5 Claude
+    /// cases (moved verbatim from the old `getLimitData`/`colorForLimitType`) and from `codexUsageData`
+    /// for the 3 Codex cases.
+    private func resolve(_ limitType: LimitType) -> ResolvedPoint? {
         switch limitType {
         case .fiveHour:
-            if let limit = data.fiveHour {
-                return UsageColorScheme.fiveHourColorSwiftUI(limit.percentage)
-            }
+            guard let data = usageData, let limit = data.fiveHour else { return nil }
+            return ResolvedPoint(
+                percentage: limit.percentage,
+                resetsAt: limit.resetsAt,
+                windowSeconds: nil,
+                color: UsageColorScheme.fiveHourColorSwiftUI(limit.percentage)
+            )
         case .sevenDay:
-            if let limit = data.sevenDay {
-                return UsageColorScheme.sevenDayColorSwiftUI(limit.percentage)
-            }
+            guard let data = usageData, let limit = data.sevenDay else { return nil }
+            return ResolvedPoint(
+                percentage: limit.percentage,
+                resetsAt: limit.resetsAt,
+                windowSeconds: nil,
+                color: UsageColorScheme.sevenDayColorSwiftUI(limit.percentage)
+            )
         case .opusWeekly:
-            if let limit = data.opus {
-                return Color(UsageColorScheme.opusWeeklyColor(limit.percentage))
-            }
+            guard let data = usageData, let limit = data.opus else { return nil }
+            return ResolvedPoint(
+                percentage: limit.percentage,
+                resetsAt: limit.resetsAt,
+                windowSeconds: nil,
+                color: Color(UsageColorScheme.opusWeeklyColor(limit.percentage))
+            )
         case .sonnetWeekly:
-            if let limit = data.sonnet {
-                return Color(UsageColorScheme.sonnetWeeklyColor(limit.percentage))
-            }
+            guard let data = usageData, let limit = data.sonnet else { return nil }
+            return ResolvedPoint(
+                percentage: limit.percentage,
+                resetsAt: limit.resetsAt,
+                windowSeconds: nil,
+                color: Color(UsageColorScheme.sonnetWeeklyColor(limit.percentage))
+            )
         case .extraUsage:
-            if let extra = data.extraUsage, let percentage = extra.percentage {
-                return Color(UsageColorScheme.extraUsageColor(percentage))
+            // ExtraUsageData has different structure and no resetsAt; keep plotting it at x=0
+            // (elapsed-ratio 0), matching the pre-existing convention.
+            guard let data = usageData, let extra = data.extraUsage, let percentage = extra.percentage else {
+                return nil
             }
-        case .codexPrimary, .codexSecondary, .codexExtraUsage:
-            // Codex limits are not rendered by this Claude-only view
-            break
+            return ResolvedPoint(
+                percentage: percentage,
+                resetsAt: nil,
+                windowSeconds: nil,
+                color: Color(UsageColorScheme.extraUsageColor(percentage))
+            )
+        case .codexPrimary:
+            guard let limit = codexUsageData?.primary, isPlottable(limit) else { return nil }
+            return ResolvedPoint(
+                percentage: limit.percentage,
+                resetsAt: limit.resetsAt,
+                windowSeconds: limit.windowSeconds,
+                color: UsageColorScheme.codexPrimaryColorSwiftUI(limit.percentage)
+            )
+        case .codexSecondary:
+            // secondary_window is null on this account today (P01/P03 finding); guard makes that a
+            // clean "no point drawn" rather than a fabricated dot at x=0,y=0.
+            guard let limit = codexUsageData?.secondary, isPlottable(limit) else { return nil }
+            return ResolvedPoint(
+                percentage: limit.percentage,
+                resetsAt: limit.resetsAt,
+                windowSeconds: limit.windowSeconds,
+                color: UsageColorScheme.codexSecondaryColorSwiftUI(limit.percentage)
+            )
+        case .codexExtraUsage:
+            // Same x=0 convention as Claude's `.extraUsage` (no resetsAt), for consistency.
+            guard let extra = codexUsageData?.extraUsage, let percentage = extra.percentage else {
+                return nil
+            }
+            return ResolvedPoint(
+                percentage: percentage,
+                resetsAt: nil,
+                windowSeconds: nil,
+                color: UsageColorScheme.codexExtraUsageColorSwiftUI(percentage)
+            )
         }
-        return .gray
     }
 }
 
@@ -290,7 +403,7 @@ struct LinearUsageGraphView: View {
 struct LinearUsageGraphView_Previews: PreviewProvider {
     static var previews: some View {
         VStack(spacing: 20) {
-            // Normal state with data
+            // Normal state with data (Claude only — unchanged from before P05)
             LinearUsageGraphView(
                 usageData: UsageData(
                     fiveHour: UsageData.LimitData(
@@ -306,6 +419,60 @@ struct LinearUsageGraphView_Previews: PreviewProvider {
                     extraUsage: nil
                 ),
                 activeDisplayTypes: [.fiveHour, .sevenDay],
+                isRefreshing: false
+            )
+
+            // 3-point sample: Claude 5h + Claude 7d + Codex primary (7-day window, per P01 finding)
+            LinearUsageGraphView(
+                usageData: UsageData(
+                    fiveHour: UsageData.LimitData(
+                        percentage: 45,
+                        resetsAt: Date().addingTimeInterval(3600 * 2.5)
+                    ),
+                    sevenDay: UsageData.LimitData(
+                        percentage: 20,
+                        resetsAt: Date().addingTimeInterval(3600 * 24 * 5)
+                    ),
+                    opus: nil,
+                    sonnet: nil,
+                    extraUsage: nil
+                ),
+                codexUsageData: CodexUsageData(
+                    primary: CodexUsageData.LimitData(
+                        percentage: 62,
+                        resetsAt: Date().addingTimeInterval(3600 * 24 * 4),
+                        windowSeconds: 604800
+                    ),
+                    secondary: nil,
+                    extraUsage: nil
+                ),
+                activeDisplayTypes: [.fiveHour, .sevenDay, .codexPrimary],
+                isRefreshing: false
+            )
+
+            // Colliding-labels case: Claude 5h and Codex primary land at nearly the same
+            // (x, y), exercising the greedy de-collision fallback slots.
+            LinearUsageGraphView(
+                usageData: UsageData(
+                    fiveHour: UsageData.LimitData(
+                        percentage: 44,
+                        resetsAt: Date().addingTimeInterval(3600 * 2.5)
+                    ),
+                    sevenDay: nil,
+                    opus: nil,
+                    sonnet: nil,
+                    extraUsage: nil
+                ),
+                codexUsageData: CodexUsageData(
+                    primary: CodexUsageData.LimitData(
+                        percentage: 46,
+                        resetsAt: Date().addingTimeInterval(3600 * 2.5 + 60),
+                        windowSeconds: 5 * 3600
+                    ),
+                    secondary: nil,
+                    extraUsage: nil
+                ),
+                activeDisplayTypes: [.fiveHour, .codexPrimary],
                 isRefreshing: false
             )
 

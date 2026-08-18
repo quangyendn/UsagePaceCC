@@ -9,6 +9,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import CryptoKit
 import ServiceManagement
 import OSLog
 
@@ -476,12 +477,259 @@ class UserSettings: ObservableObject {
             return true
         }
         #endif
-        return !accounts.isEmpty && !codexAccounts.isEmpty
+        return !accounts.isEmpty && hasAnyCodexSource
     }
 
-    /// Codex 认证信息是否已配置
+    // MARK: - Codex 双来源仲裁（CLI / Browser，见 plan.md D9/D10/D11/D13）
+
+    /// 用户偏好的 Codex 凭据来源，持久化到 UserDefaults，默认 CLI
+    @Published var codexSource: CodexSource {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_codexSource"
+            #else
+            let key = "codexSource"
+            #endif
+            defaults.set(codexSource.rawValue, forKey: key)
+        }
+    }
+
+    /// 用户是否**显式**启用了 Codex CLI 来源，持久化到 UserDefaults，默认 false。
+    /// - Important: 磁盘上存在 `~/.codex/auth.json` 只说明"检测到"，不等于用户同意本 App
+    ///   拿这份 token 去请求用量。检测与启用必须分开：未启用前不发任何 CLI 网络请求、不改菜单栏、
+    ///   不改弹窗、不改显示偏好，Auth 页也只多出一行可忽略的 opt-in 提示。
+    @Published private(set) var codexCLIEnabled: Bool {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_codexCLIEnabled"
+            #else
+            let key = "codexCLIEnabled"
+            #endif
+            defaults.set(codexCLIEnabled, forKey: key)
+        }
+    }
+
+    /// Codex CLI 是否被检测到（= 凭据文件存在）。
+    /// - Important: D13 的判定标准是"文件在不在"，不是"文件能不能用"。过期、被沙盒拒绝、
+    ///   无法解析、缺少 access_token —— 这四种都属于「已配置但当前失败」，一律保持 `true`，
+    ///   由各自的错误行告诉用户怎么修。只有 `.notInstalled`（文件确实不存在）才是未配置。
+    ///   否则 `effectiveCodexSource` 会静默回退到 Browser 来源，而那可能是**另一个** ChatGPT
+    ///   账户 —— 正是 D12/D13 要防止的危险。
+    @Published private(set) var codexCLIDetected: Bool = false
+
+    /// Codex CLI 账户展示标签（仅邮箱）
+    /// - Important: 绝不回退到 `account_id`。原始账户 id 是标识符，不进 UI。
+    ///   邮箱缺失时保持 nil，展示层退回通用的"已登录"文案。
+    @Published private(set) var codexCLIAccountLabel: String?
+
+    /// 最近一次读取 Codex CLI 凭据时遇到的错误，用于 P07 展示具体原因
+    @Published private(set) var codexCLIError: CodexCLIAuthError?
+
+    /// Codex CLI 侧的 ChatGPT account id —— D12 账户比对的关键字段
+    @Published private(set) var codexCLIChatGPTAccountId: String?
+
+    /// Codex CLI 侧的订阅计划类型
+    @Published private(set) var codexCLIPlanType: String?
+
+    #if DEBUG
+    private static let codexCLIConsentedAccountHashKey = "DEBUG_codexCLIConsentedAccountHash"
+    #else
+    private static let codexCLIConsentedAccountHashKey = "codexCLIConsentedAccountHash"
+    #endif
+
+    /// 用户 opt-in 当时那份 CLI 凭据的 `chatgpt_account_id` 的 **SHA-256 十六进制摘要**，
+    /// 持久化到 UserDefaults。
+    /// - Important: 同意是针对**某一个 ChatGPT 账户**给出的，不是针对"任何将来出现在
+    ///   `~/.codex/auth.json` 里的账户"。之后 `codex login` 换成另一个账户时，不能拿旧的
+    ///   同意继续把新账户的 token 发出去。
+    /// - Important: 这里只做相等性比对，原始 id 一点用处都没有，所以不落盘明文：
+    ///   UserDefaults 是明文 plist，会进备份，任何以该用户身份运行的程序都读得到。
+    ///   plan.md phase-02 的 Security Considerations 只认可把这个 id **留在内存里**做 D12 比对。
+    ///   不加盐——这不是口令材料，每安装一份盐还得跟摘要一起落盘，对已经能读 prefs 的攻击者毫无意义。
+    ///   摘要与原始 id 一样，永不渲染、永不写日志。
+    private var codexCLIConsentedAccountHash: String? {
+        didSet {
+            defaults.set(codexCLIConsentedAccountHash, forKey: Self.codexCLIConsentedAccountHashKey)
+        }
+    }
+
+    /// 把 ChatGPT account id 折算成 SHA-256 十六进制摘要，仅供上面的相等性比对使用
+    private static func consentDigest(for accountId: String) -> String {
+        SHA256.hash(data: Data(accountId.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    /// 探测到的 CLI 账户与用户当初同意的那个不一致，opt-in 已被自动撤回，等待用户重新确认。
+    @Published private(set) var codexCLIAccountChanged: Bool = false
+
+    /// Codex Browser 侧的 ChatGPT account id —— D12 账户比对的关键字段
+    /// - Note: 由 `CodexBrowserUsageSource` 在一次用量请求成功后解析 `accessToken` 的
+    ///   `https://api.openai.com/auth` claim 并写入；解析失败或尚未成功请求过时保持 nil
+    @Published private(set) var codexBrowserChatGPTAccountId: String?
+
+    /// 是否存在任意一个 Codex 凭据来源（CLI 或 Browser）
+    /// - Important: 只用于"是否存在来源"的判断（existence gate）。凡是需要遍历真实账户列表
+    ///   或对 `codexAccounts` 做增删的地方，一律保持读 `codexAccounts` 本身，不要替换成这个属性（D11）。
+    var hasAnyCodexSource: Bool { isCLISourceConfigured || !codexAccounts.isEmpty }
+
+    /// CLI 来源是否已配置 = 用户已显式启用 **且** 凭据文件存在。
+    /// - Important: 两个条件的分工不同，不要合并理解：`codexCLIEnabled` 是"用户同不同意"，
+    ///   `codexCLIDetected` 是 D13 的"文件在不在"（过期/不可读/无法解析都仍算存在，
+    ///   属于「已配置但当前失败」，不触发向 Browser 的可用性回退）。
+    var isCLISourceConfigured: Bool { codexCLIEnabled && codexCLIDetected }
+
+    /// 检测到 CLI 凭据但用户尚未启用 —— Auth 页展示 opt-in 行的唯一条件
+    var isCodexCLIOptInPending: Bool { codexCLIDetected && !codexCLIEnabled }
+
+    /// Browser 来源是否已配置
+    var isBrowserSourceConfigured: Bool { !codexSessionToken.isEmpty }
+
+    /// 当前生效的 Codex 来源；两个来源都未配置时为 nil
+    /// - Note: 仅在"用户偏好的来源未配置、另一个来源已配置"时回退，这是可用性判断，不是失败时的静默切换
+    var effectiveCodexSource: CodexSource? {
+        if isSourceConfigured(codexSource) { return codexSource }
+        if isSourceConfigured(codexSource.other) { return codexSource.other }
+        return nil
+    }
+
+    /// `effectiveCodexSource` 是否因用户偏好的来源不可用而回退到另一个来源（用于 P07 提示文案）
+    var codexSourceIsFallback: Bool {
+        guard let effective = effectiveCodexSource else { return false }
+        return effective != codexSource
+    }
+
+    /// Codex 认证信息是否已配置（widened：CLI 或 Browser 任一来源可用即可）
     var hasValidCodexCredentials: Bool {
-        !codexSessionToken.isEmpty
+        effectiveCodexSource != nil
+    }
+
+    private func isSourceConfigured(_ source: CodexSource) -> Bool {
+        switch source {
+        case .cli: return isCLISourceConfigured
+        case .browser: return isBrowserSourceConfigured
+        }
+    }
+
+    /// 重新探测 Codex CLI 凭据文件，更新 `codexCLIDetected` / `codexCLIAccountLabel` 等派生状态
+    /// - Returns: 检测状态或账户标签是否发生了变化
+    /// - Important: 只读（D10）。这里只是读取并解析文件，绝不写回 `~/.codex/`，也绝不发起网络请求。
+    @discardableResult
+    func refreshCodexCLIState() -> Bool {
+        let wasConfigured = isCLISourceConfigured
+        let previousLabel = codexCLIAccountLabel
+
+        var revokedForAccountChange = false
+
+        do {
+            let auth = try CodexCLIAuthReader.read()
+            codexCLIDetected = true
+            codexCLIAccountLabel = auth.email
+            codexCLIChatGPTAccountId = auth.chatgptAccountId
+            codexCLIPlanType = auth.planType
+            codexCLIError = nil
+            Logger.api.debug("Codex CLI 已检测到，凭据有效")
+
+            // 换账户后不自动续用旧的同意：撤回 opt-in，退回 pending 状态等用户重新确认。
+            // 两个 id 都非 nil 且不相等才触发 —— 任一为 nil 一律保持沉默（同 D12）。
+            if codexCLIEnabled,
+               let consented = codexCLIConsentedAccountHash,
+               let current = auth.chatgptAccountId,
+               Self.consentDigest(for: current) != consented {
+                codexCLIEnabled = false
+                codexCLIAccountChanged = true
+                revokedForAccountChange = true
+                Logger.settings.notice("Codex CLI 凭据换成了另一个 ChatGPT 账户，已撤回 opt-in")
+            }
+        } catch let error as CodexCLIAuthError {
+            codexCLIError = error
+            // 失败时派生信息一律清空；是否"已配置"只由下面的 switch 决定。
+            codexCLIAccountLabel = nil
+            codexCLIChatGPTAccountId = nil
+            codexCLIPlanType = nil
+            switch error {
+            case .tokenExpired:
+                // D13：过期的 token 依然算"已配置"，不能因为过期就当作未安装
+                codexCLIDetected = true
+                Logger.api.debug("Codex CLI 已检测到，但 access_token 已过期")
+            case .notInstalled:
+                // 唯一的"未配置"：文件确实不存在
+                codexCLIDetected = false
+                Logger.api.debug("Codex CLI 未检测到（凭据文件不存在）")
+            case .sandboxDenied:
+                // 文件在，只是读不到 —— 已配置但失败（D13），不回退到 Browser 来源
+                codexCLIDetected = true
+                Logger.api.debug("Codex CLI 凭据文件读取被沙盒拒绝")
+            case .malformed, .noAccessToken:
+                // 文件在，只是内容用不了 —— 同上，交给各自的错误行，不静默换账户
+                codexCLIDetected = true
+                Logger.api.debug("Codex CLI 凭据文件存在但无法解析")
+            }
+        } catch {
+            // `CodexCLIAuthReader.read()` 只抛 `CodexCLIAuthError`，这里理论上不可达；
+            // 万一到达，按 D13 一律算「已配置但当前失败」。
+            // - Important: 不要改回 `CodexCLIAuthReader.isPresent`：它是 `isReadableFile`，
+            //   沙盒拒绝时返回 false，而上面的 switch 恰恰把沙盒拒绝判为 `detected = true`。
+            //   同一个物理状态两处给相反答案，只会在回退到 Browser 来源时静默换掉账户。
+            codexCLIDetected = true
+            codexCLIAccountLabel = nil
+            codexCLIChatGPTAccountId = nil
+            codexCLIPlanType = nil
+            codexCLIError = .malformed
+            Logger.api.debug("Codex CLI 凭据读取失败：未知错误")
+        }
+
+        Logger.api.debug("Codex 当前生效来源: \(String(describing: self.effectiveCodexSource), privacy: .public)")
+
+        // 未启用 CLI 之前，这次探测对外不产生任何可观察后果：不发通知、不改显示偏好。
+        // 显示偏好的默认补齐只发生在显式 opt-in（`setCodexCLIEnabled(true)`）或新增 Browser 账户时。
+        let changed = (wasConfigured != isCLISourceConfigured)
+            || (isCLISourceConfigured && previousLabel != codexCLIAccountLabel)
+        // 撤回 opt-in 时不再发 `.accountChanged`：`$codexCLIEnabled` 的订阅已经会清空 Codex 状态
+        // 并按需重新拉取，两条路径都发一次就会互相 cancel，闪出一行 `URLError.cancelled`。
+        if changed && !revokedForAccountChange {
+            postAccountChanged(provider: .codex)
+        }
+        return changed
+    }
+
+    /// 显式启用 / 关闭 Codex CLI 来源（一次性 opt-in，来自 Auth 页的用户点击）
+    /// - Important: 只有这里（以及新增 Browser 账户）才允许补齐 Codex 显示项；
+    ///   后台探测永远不改用户已持久化的 `customDisplayTypes`。
+    func setCodexCLIEnabled(_ enabled: Bool) {
+        guard codexCLIEnabled != enabled else { return }
+
+        if enabled {
+            // 先探测、后翻开关（同冷启动那处的排序修复）：探测时 CLI 仍未启用，
+            // `isCLISourceConfigured` 恒为 false，`refreshCodexCLIState()` 不会发
+            // `.accountChanged`。反过来先翻开关的话，若邮箱/标签自启动探测以来变过，
+            // 探测会发一次通知触发 `fetchCodexOnly()`，随后 `$codexCLIEnabled` 的订阅再发一次，
+            // 而 `CodexAPIService.fetchUsage` 开头会 cancelAllRequests，前一次被打断成
+            // `URLError.cancelled`，弹窗闪一行 Codex 错误。
+            refreshCodexCLIState()
+            // 记录本次同意针对的账户（只存摘要）；换成别的 ChatGPT 账户后需要重新确认
+            // （见 refreshCodexCLIState）
+            codexCLIConsentedAccountHash = codexCLIChatGPTAccountId.map { Self.consentDigest(for: $0) }
+            codexCLIAccountChanged = false
+            codexCLIEnabled = true
+            if hasValidCodexCredentials {
+                ensureDefaultCodexDisplayTypesForCustomMode()
+            }
+        } else {
+            codexCLIEnabled = false
+            codexCLIConsentedAccountHash = nil
+            codexCLIAccountChanged = false
+        }
+
+        Logger.settings.notice("Codex CLI 来源已\(enabled ? "启用" : "关闭", privacy: .public)")
+    }
+
+    /// 从 Browser 侧 accessToken 中解析 `chatgpt_account_id` claim 并发布（D12）
+    /// - Important: 纯本地解析（复用 `CodexCLIAuthReader.decodeJWTPayload`），不发起任何网络请求；
+    ///   claim 缺失或解析失败时静默保持 nil —— 与 D12 的"未知 id 保持沉默"规则一致
+    func updateCodexBrowserChatGPTAccountId(fromAccessToken accessToken: String) {
+        let authClaim = CodexCLIAuthReader.decodeJWTPayload(accessToken)?["https://api.openai.com/auth"] as? [String: Any]
+        codexBrowserChatGPTAccountId = authClaim?["chatgpt_account_id"] as? String
     }
 
     // MARK: - 非敏感设置（存储在UserDefaults中）
@@ -879,6 +1127,31 @@ class UserSettings: ObservableObject {
         } else {
             self.currentCodexAccountId = loadedCodexAccounts.first?.id
         }
+
+        // 加载 Codex 凭据来源偏好（CLI / Browser），默认 CLI —— D9
+        #if DEBUG
+        let codexSourceKey = "DEBUG_codexSource"
+        #else
+        let codexSourceKey = "codexSource"
+        #endif
+        if let sourceString = defaults.string(forKey: codexSourceKey),
+           let source = CodexSource(rawValue: sourceString) {
+            self.codexSource = source
+        } else {
+            self.codexSource = .cli
+        }
+
+        // 加载 Codex CLI 显式启用标记，默认 false（未 opt-in 前不使用 CLI 凭据）
+        #if DEBUG
+        let codexCLIEnabledKey = "DEBUG_codexCLIEnabled"
+        #else
+        let codexCLIEnabledKey = "codexCLIEnabled"
+        #endif
+        self.codexCLIEnabled = defaults.bool(forKey: codexCLIEnabledKey)
+
+        // 加载用户 opt-in 时同意的那个 ChatGPT 账户 id 的摘要（D12 同款比对字段）。
+        // 只用于比对，永不进入 UI、日志或网络请求。
+        self.codexCLIConsentedAccountHash = defaults.string(forKey: Self.codexCLIConsentedAccountHashKey)
 
         // MARK: - 旧版迁移（v1.x → v2.0.0，保留向后兼容）
 
@@ -1550,7 +1823,7 @@ class UserSettings: ObservableObject {
             // 自定义模式：按用户选择排序，无论数据是否存在都显示
             // Codex 类型仅在有 Codex 账号时纳入候选；Debug mock 模式例外
             var orderedTypes: [LimitType] = [.fiveHour, .sevenDay, .extraUsage, .opusWeekly, .sonnetWeekly]
-            var shouldIncludeCodexTypes = !codexAccounts.isEmpty
+            var shouldIncludeCodexTypes = hasAnyCodexSource
             #if DEBUG
             if debugModeEnabled {
                 shouldIncludeCodexTypes = true
