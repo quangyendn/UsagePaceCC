@@ -428,8 +428,10 @@
 "notification.description" = "Receive a notification when any limit reaches 90%%, or when usage resets.";
 "notification.warning_title" = "Usage Warning";
 "notification.warning_body" = "%@ has reached %d%% usage";
+"notification.warning_body_with_account" = "%@ · %@ has reached %d%% usage";
 "notification.reset_title" = "Usage Reset";
 "notification.reset_body" = "%@ usage has been reset";
+"notification.reset_body_with_account" = "%@ · %@ usage has been reset";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "Sign in to Claude";

@@ -35,12 +35,16 @@ class MenuBarIconRenderer {
     /// - Parameters:
     ///   - usageData: Claude 用量数据
     ///   - codexUsageData: Codex 用量数据（nil 表示无 Codex 账号）
+    ///   - claudeSnapshots: 所有已保存 Claude 账户的用量快照（P05）；用于经
+    ///     `topUrgentAccounts` 选出最多 2 个最紧迫账户，渲染为账户组合图标（环+饼形扇区）。
+    ///     Codex 目前仍是单账户，图标渲染路径不受此参数影响。
     ///   - hasUpdate: 是否有可用更新
     ///   - button: 状态栏按钮（用于获取外观模式）
     /// - Returns: 生成的图标图像
     func createIcon(
         usageData: UsageData?,
         codexUsageData: CodexUsageData? = nil,
+        claudeSnapshots: [AccountUsageSnapshot] = [],
         hasUpdate: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
@@ -64,7 +68,7 @@ class MenuBarIconRenderer {
             if settings.isMultiProviderActive, let data = usageData {
                 // 双 Provider 模式
                 let claudeTypes = allTypes.filter { $0.provider == .claude }
-                icon = createMultiProviderIcon(data: data, codex: codex, claudeTypes: claudeTypes, codexTypes: codexTypes, isMonochrome: isMonochrome, button: button)
+                icon = createMultiProviderIcon(data: data, codex: codex, claudeTypes: claudeTypes, codexTypes: codexTypes, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
             } else {
                 // Codex-only（无 Claude 账号）或降级路径
                 icon = createCodexOnlyIcon(codex: codex, codexTypes: codexTypes, isMonochrome: isMonochrome, button: button)
@@ -89,7 +93,7 @@ class MenuBarIconRenderer {
 
             switch settings.iconDisplayMode {
             case .percentageOnly:
-                icon = createCombinedPercentageIcon(data: data, types: activeTypes, isMonochrome: isMonochrome, button: button)
+                icon = createCombinedPercentageIcon(data: data, types: activeTypes, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
             case .iconOnly:
                 let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
                 if let iconCopy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) {
@@ -98,7 +102,7 @@ class MenuBarIconRenderer {
                     icon = createSimpleCircleIcon()
                 }
             case .both:
-                icon = createCombinedIconWithAppIcon(data: data, types: activeTypes, isMonochrome: isMonochrome, button: button)
+                icon = createCombinedIconWithAppIcon(data: data, types: activeTypes, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
             case .none:
                 icon = createMenuBarDividerIcon(isMonochrome: isMonochrome)
             }
@@ -116,6 +120,7 @@ class MenuBarIconRenderer {
         codex: CodexUsageData,
         claudeTypes: [LimitType],
         codexTypes: [LimitType],
+        claudeSnapshots: [AccountUsageSnapshot],
         isMonochrome: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
@@ -133,8 +138,10 @@ class MenuBarIconRenderer {
             }
 
         case .percentageOnly, .both:
-            // Claude 部分
-            let claudeIcons = claudeTypes.compactMap { createIconForType($0, data: data, isMonochrome: isMonochrome, button: button) }
+            // Claude 部分：5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
+            var claudeIcons = createAccountGlyphIcons(from: claudeSnapshots, types: claudeTypes, button: button, isMonochrome: isMonochrome)
+            let remainingClaudeTypes = claudeTypes.filter { $0 != .fiveHour && $0 != .sevenDay }
+            claudeIcons.append(contentsOf: remainingClaudeTypes.compactMap { createIconForType($0, data: data, isMonochrome: isMonochrome, button: button) })
             if !claudeIcons.isEmpty {
                 if settings.iconDisplayMode == .both {
                     let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
@@ -238,17 +245,16 @@ class MenuBarIconRenderer {
     private func createCombinedPercentageIcon(
         data: UsageData,
         types: [LimitType],
+        claudeSnapshots: [AccountUsageSnapshot],
         isMonochrome: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
-        guard !types.isEmpty else {
-            return createSimpleCircleIcon()
-        }
-
-        // 为每个类型创建图标
-        let icons = types.compactMap { type in
+        // 5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
+        var icons = createAccountGlyphIcons(from: claudeSnapshots, types: types, button: button, isMonochrome: isMonochrome)
+        let remainingTypes = types.filter { $0 != .fiveHour && $0 != .sevenDay }
+        icons.append(contentsOf: remainingTypes.compactMap { type in
             createIconForType(type, data: data, isMonochrome: isMonochrome, button: button)
-        }
+        })
 
         // 组合图标
         if icons.isEmpty {
@@ -266,19 +272,22 @@ class MenuBarIconRenderer {
     private func createCombinedIconWithAppIcon(
         data: UsageData,
         types: [LimitType],
+        claudeSnapshots: [AccountUsageSnapshot],
         isMonochrome: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
         // 获取 App 图标（单色模式使用反转图标）
         let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
         guard let appIconCopy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) else {
-            return createCombinedPercentageIcon(data: data, types: types, isMonochrome: isMonochrome, button: button)
+            return createCombinedPercentageIcon(data: data, types: types, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
         }
 
-        // 创建百分比图标
-        let percentageIcons = types.compactMap { type in
+        // 5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
+        var percentageIcons = createAccountGlyphIcons(from: claudeSnapshots, types: types, button: button, isMonochrome: isMonochrome)
+        let remainingTypes = types.filter { $0 != .fiveHour && $0 != .sevenDay }
+        percentageIcons.append(contentsOf: remainingTypes.compactMap { type in
             createIconForType(type, data: data, isMonochrome: isMonochrome, button: button)
-        }
+        })
 
         // 组合 App 图标 + 百分比图标
         var allIcons = [appIconCopy]
@@ -291,7 +300,7 @@ class MenuBarIconRenderer {
     
     // MARK: - Icon Drawing - Colored Mode (彩色模式)
 
-    private func createCircleImage(percentage: Double, size: NSSize, useSevenDayColor: Bool = false, colorOverride: NSColor? = nil, useDashedStyle: Bool = false, button: NSStatusBarButton?, removeBackground: Bool = false) -> NSImage {
+    private func createCircleImage(percentage: Double, size: NSSize, colorOverride: NSColor? = nil, useDashedStyle: Bool = false, button: NSStatusBarButton?, removeBackground: Bool = false) -> NSImage {
         let image = NSImage(size: size)
         image.lockFocus()
 
@@ -310,51 +319,18 @@ class MenuBarIconRenderer {
         backgroundPath.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360, clockwise: false)
         backgroundPath.lineWidth = 1.5
 
-        // 7天/Codex secondary 限制使用虚线以区分实线圆
-        if useSevenDayColor || useDashedStyle {
+        // Codex secondary 限制使用虚线以区分实线圆（Claude 5h/7d 的虚线区分已被 P05 的
+        // pie-wedge 内圈取代，仅 Codex 仍走这条独立圆环渲染路径）
+        if useDashedStyle {
             let dashPattern: [CGFloat] = [3, 1]
             backgroundPath.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
         }
 
         backgroundPath.stroke()
 
-        let color: NSColor
-        if let override = colorOverride {
-            color = override
-        } else {
-            color = useSevenDayColor ? UsageColorScheme.sevenDayColorAdaptive(percentage, for: button) : UsageColorScheme.fiveHourColorAdaptive(percentage, for: button)
-        }
-        color.setStroke()
+        let color = colorOverride ?? UsageColorScheme.fiveHourColorAdaptive(percentage, for: button)
 
-        let progressPath = NSBezierPath()
-        let lineWidth: CGFloat = 2.5
-
-        // 计算进度角度
-        let baseAngle = CGFloat(percentage) / 100.0 * 360
-        let circumference = 2 * CGFloat.pi * radius  // 圆周长
-        let capAngle = (lineWidth / circumference) * 360  // 圆头延伸对应的角度
-
-        let progressAngle: CGFloat
-        let startAngle: CGFloat
-
-        if percentage >= 100 {
-            // 100%: 使用完整角度和固定起点，因为 .butt 端点无延伸
-            progressAngle = baseAngle
-            startAngle = 90
-        } else {
-            // 5小时/7天限制：使用渐进式减法，保持起点固定，实现平滑增长
-            // 减去的角度随百分比线性增加，在50%时完成完整减法，50%-100%显示完全精确
-            progressAngle = baseAngle - capAngle * min(1.0, CGFloat(percentage / 50.0))
-            startAngle = 90 - capAngle / 2 + 0.5
-        }
-
-        let endAngle = startAngle - progressAngle
-
-        progressPath.appendArc(withCenter: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: true)
-        progressPath.lineWidth = lineWidth
-        // 100%时使用平头让圆环完美闭合，其他进度使用圆头
-        progressPath.lineCapStyle = percentage >= 100 ? .butt : .round
-        progressPath.stroke()
+        drawProgressRing(in: NSRect(origin: .zero, size: size), percentage: percentage, color: color, lineWidth: 2.5)
 
         let fontSize: CGFloat = percentage >= 100 ? size.width * 0.275 : size.width * 0.4
         let font = NSFont.systemFont(ofSize: fontSize, weight: percentage >= 100 ? .bold : .semibold)
@@ -385,7 +361,7 @@ class MenuBarIconRenderer {
         backgroundPath.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360, clockwise: false)
         backgroundPath.lineWidth = 1.5
 
-        // 7天限制使用虚线以区分5小时限制
+        // Codex secondary 限制使用虚线以区分实线圆
         if useSevenDayStyle {
             let dashPattern: [CGFloat] = [3, 1]
             backgroundPath.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
@@ -393,9 +369,39 @@ class MenuBarIconRenderer {
 
         backgroundPath.stroke()
 
-        NSColor.labelColor.setStroke()
+        drawProgressRing(in: NSRect(origin: .zero, size: size), percentage: percentage, color: NSColor.labelColor, lineWidth: 2.5)
+
+        let fontSize: CGFloat = percentage >= 100 ? size.width * 0.275 : size.width * 0.4
+        let font = NSFont.systemFont(ofSize: fontSize, weight: percentage >= 100 ? .bold : .semibold)
+        let text = "\(Int(percentage))"
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black, .paragraphStyle: paragraphStyle]
+        let textSize = text.size(withAttributes: attrs)
+        text.draw(at: NSPoint(x: center.x - textSize.width / 2, y: center.y - textSize.height / 2), withAttributes: attrs)
+
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
+    }
+
+    // MARK: - Shared Ring / Wedge Drawing Helpers (P05)
+
+    /// 提取自 `createCircleImage`/`createCircleTemplateImage` 的外圈弧线描边逻辑：
+    /// 保留原有的圆头端点角度修正数学（cap-angle correction），供彩色/单色圆环
+    /// 以及新的账户组合图标（`createAccountGlyph`）共用，避免重复实现。
+    /// - Parameters:
+    ///   - rect: 图标绘制区域（正方形），圆心与半径均从此推导
+    ///   - percentage: 使用百分比 (0-100+)
+    ///   - color: 描边颜色
+    ///   - lineWidth: 描边宽度
+    private func drawProgressRing(in rect: NSRect, percentage: Double, color: NSColor, lineWidth: CGFloat) {
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2 - 2
+
+        color.setStroke()
+
         let progressPath = NSBezierPath()
-        let lineWidth: CGFloat = 2.5
 
         // 计算进度角度
         let baseAngle = CGFloat(percentage) / 100.0 * 360
@@ -410,7 +416,7 @@ class MenuBarIconRenderer {
             progressAngle = baseAngle
             startAngle = 90
         } else {
-            // 单色模式：使用渐进式减法，保持起点固定，实现平滑增长
+            // 5小时/7天限制：使用渐进式减法，保持起点固定，实现平滑增长
             // 减去的角度随百分比线性增加，在50%时完成完整减法，50%-100%显示完全精确
             progressAngle = baseAngle - capAngle * min(1.0, CGFloat(percentage / 50.0))
             startAngle = 90 - capAngle / 2 + 0.5
@@ -423,19 +429,189 @@ class MenuBarIconRenderer {
         // 100%时使用平头让圆环完美闭合，其他进度使用圆头
         progressPath.lineCapStyle = percentage >= 100 ? .butt : .round
         progressPath.stroke()
+    }
 
-        let fontSize: CGFloat = percentage >= 100 ? size.width * 0.275 : size.width * 0.4
-        let font = NSFont.systemFont(ofSize: fontSize, weight: percentage >= 100 ? .bold : .semibold)
-        let text = "\(Int(percentage))"
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black, .paragraphStyle: paragraphStyle]
-        let textSize = text.size(withAttributes: attrs)
-        text.draw(at: NSPoint(x: center.x - textSize.width / 2, y: center.y - textSize.height / 2), withAttributes: attrs)
+    /// 绘制 7 天用量的内圈饼形扇区填充（取代旧的虚线圆环区分方式）。
+    /// - Parameters:
+    ///   - rect: 扇区绘制区域，半径小于外圈进度环，以在环与扇区之间留出可视间隙
+    ///   - percentage: 使用百分比 (0-100+)；0% 时不绘制任何图形（无残留细线）
+    ///   - color: 填充颜色
+    private func drawPieWedge(in rect: NSRect, percentage: Double, color: NSColor) {
+        guard percentage > 0 else { return }
+
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        let clampedPercentage = min(percentage, 100)
+
+        // 与外圈进度环起点一致：12 点钟方向（90°），顺时针增长
+        let startAngle: CGFloat = 90
+        let sweep = CGFloat(clampedPercentage) / 100.0 * 360
+        let endAngle = startAngle - sweep
+
+        let path = NSBezierPath()
+        path.move(to: center)
+        path.appendArc(withCenter: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: true)
+        path.line(to: center)
+        path.close()
+
+        color.setFill()
+        path.fill()
+    }
+
+    /// 在外观（浅色/深色菜单栏）间应用亮度自适应：仅提取 `NSColor.adjustedForDarkMode()`
+    /// 这部分与百分比无关的亮度变换逻辑复用，而非百分比驱动的颜色选择（`UsageColorScheme.*ColorAdaptive`），
+    /// 使其可以作用于任意账户自定义颜色（`Account.color`），不仅限于原有的危险色阶。
+    private func appearanceAdaptiveColor(_ base: NSColor, appearance: NSAppearance) -> NSColor {
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark ? base.adjustedForDarkMode() : base
+    }
+
+    /// 账户紧迫度评分：取 5 小时/7 天两个窗口中百分比较高者（而非仅优先 5h），
+    /// 与 phase-03 图表对每个窗口独立应用 `isNearLimit` 保持一致——5h 低但 7d 接近上限的账户
+    /// 同样应触发红色警示叠加层。仅统计用户当前实际勾选展示的窗口（`showFiveHour`/`showSevenDay`），
+    /// 避免为未展示的窗口触发用户看不到对应图形的警示。
+    private func urgentWindowPercentage(for snapshot: AccountUsageSnapshot, showFiveHour: Bool, showSevenDay: Bool) -> Double {
+        let fiveHourPct = showFiveHour ? snapshot.fiveHour?.percentage : nil
+        let sevenDayPct = showSevenDay ? snapshot.sevenDay?.percentage : nil
+        return max(fiveHourPct ?? 0, sevenDayPct ?? 0)
+    }
+
+    /// 在图标外边界叠加一圈近上限警示描边（红色），叠加于账户颜色之上而非替代它——
+    /// 颜色承载账户身份，警示叠加层承载紧迫度。
+    private func drawNearLimitOverlay(in rect: NSRect) {
+        let overlayRect = rect.insetBy(dx: 0.75, dy: 0.75)
+        let path = NSBezierPath(ovalIn: overlayRect)
+        path.lineWidth = 1.2
+        NSColor.systemRed.setStroke()
+        path.stroke()
+    }
+
+    /// 提取自 `createCircleImage`/`createCircleTemplateImage` 的淡色背景「轨道」圆环：
+    /// 在描边进度弧之前先画一圈完整的浅色圆，确保 0% 用量时图标仍是「一个可见的空心圆」，
+    /// 而不是几乎不可见的一个小点（P05 code review finding #5）。
+    /// `dashed` 复用 `createCircleImage`/`createCircleTemplateImage` 中既有的虚线约定
+    /// （`useDashedStyle`/`useSevenDayStyle`），用于单色模式下以「实线 vs 虚线」区分同形状的
+    /// 两个账户图标（因为单色模式下账户颜色不可用，无法再靠颜色区分身份）。
+    private func drawTrackCircle(center: NSPoint, radius: CGFloat, color: NSColor, dashed: Bool) {
+        let path = NSBezierPath()
+        path.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360, clockwise: false)
+        path.lineWidth = 1.5
+        if dashed {
+            let dashPattern: [CGFloat] = [3, 1]
+            path.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
+        }
+        color.setStroke()
+        path.stroke()
+    }
+
+    /// 创建单个账户的组合图标：外圈 5h 进度环 + 内圈 7d 饼形扇区。
+    /// 彩色模式下以账户颜色渲染（外观自适应亮度调整）；单色模式下改用 `NSColor.labelColor`
+    /// 绘制并将 `image.isTemplate = true`（P05 code review finding #3），以便随菜单栏浅色/深色/
+    /// 高亮状态反色；由于单色模式下无法再靠账户颜色区分身份，第二个账户的轨道圆环改用虚线
+    /// （`useDashedTrack`，复用既有的虚线区分约定）。
+    /// `showFiveHour`/`showSevenDay` 反映用户在设置中实际勾选展示的类型（finding #1）：
+    /// 未勾选的窗口不绘制对应图形；若该账户在两个已勾选窗口上均无数据，返回占位图标兜底
+    /// （理论上不应被 `createAccountGlyphIcons` 的前置过滤选中，这里仅作防御）。
+    /// - Parameters:
+    ///   - snapshot: 账户用量快照
+    ///   - isNearLimit: 是否已临近上限（决定是否叠加警示描边）
+    ///   - appearance: 状态栏按钮的外观，用于亮度自适应
+    ///   - showFiveHour: 用户是否勾选展示 5h 窗口
+    ///   - showSevenDay: 用户是否勾选展示 7d 窗口
+    ///   - isMonochrome: 是否为单色模式
+    ///   - useDashedTrack: 单色模式下是否使用虚线轨道以区分账户（通常仅第二个账户为 true）
+    private func createAccountGlyph(
+        snapshot: AccountUsageSnapshot,
+        isNearLimit: Bool,
+        appearance: NSAppearance,
+        showFiveHour: Bool,
+        showSevenDay: Bool,
+        isMonochrome: Bool,
+        useDashedTrack: Bool
+    ) -> NSImage {
+        let fiveHour = showFiveHour ? snapshot.fiveHour : nil
+        let sevenDay = showSevenDay ? snapshot.sevenDay : nil
+        guard fiveHour != nil || sevenDay != nil else {
+            return createSimpleCircleIcon()
+        }
+
+        let size = NSSize(width: metricIconSize, height: metricIconSize)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        let rect = NSRect(origin: .zero, size: size)
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let color: NSColor
+        if isMonochrome {
+            color = NSColor.labelColor
+        } else {
+            color = appearanceAdaptiveColor(NSColor(snapshot.color.swiftUIColor), appearance: appearance)
+        }
+        let trackColor = isMonochrome ? NSColor.labelColor.withAlphaComponent(0.25) : NSColor.gray.withAlphaComponent(0.5)
+
+        if let fiveHour = fiveHour {
+            let outerRadius = min(rect.width, rect.height) / 2 - 2
+            drawTrackCircle(center: center, radius: outerRadius, color: trackColor, dashed: useDashedTrack)
+            drawProgressRing(in: rect, percentage: fiveHour.percentage, color: color, lineWidth: 2.5)
+        }
+
+        if let sevenDay = sevenDay {
+            // 半径小于外圈进度环（外圈半径 = size/2 - 2），留出可视间隙
+            let wedgeInset: CGFloat = 5.5
+            let wedgeRect = rect.insetBy(dx: wedgeInset, dy: wedgeInset)
+            let wedgeRadius = min(wedgeRect.width, wedgeRect.height) / 2
+            drawTrackCircle(center: center, radius: wedgeRadius, color: trackColor, dashed: useDashedTrack)
+            drawPieWedge(in: wedgeRect, percentage: sevenDay.percentage, color: color)
+        }
+
+        if isNearLimit {
+            drawNearLimitOverlay(in: rect)
+        }
 
         image.unlockFocus()
-        image.isTemplate = true
+        image.isTemplate = isMonochrome
         return image
+    }
+
+    /// 按 provider 选出最紧迫的账户（`topUrgentAccounts`，上限 2 个），并映射为组合图标数组。
+    /// - `types` 是用户当前实际勾选展示的类型（自定义模式下可能仅勾选 5h 或仅勾选 7d，
+    ///   甚至两者都未勾选）：两者都未勾选时直接返回空数组，不为该账户组渲染任何图形
+    ///   （P05 code review finding #1）。
+    /// - 先按「在已勾选窗口上是否有真实数据」过滤快照（finding #6），确保两个窗口均无数据
+    ///   （拉取失败/尚未加载）的账户不会因为可用账户不足 `limit` 而占据一个图标槽位、
+    ///   渲染出无意义的占位圆；`createAccountGlyph` 内部的防御性 guard 仍保留作为兜底，
+    ///   但不再作为主要过滤手段。
+    private func createAccountGlyphIcons(
+        from snapshots: [AccountUsageSnapshot],
+        types: [LimitType],
+        button: NSStatusBarButton?,
+        isMonochrome: Bool
+    ) -> [NSImage] {
+        guard !snapshots.isEmpty else { return [] }
+
+        let showFiveHour = types.contains(.fiveHour)
+        let showSevenDay = types.contains(.sevenDay)
+        guard showFiveHour || showSevenDay else { return [] }
+
+        let usable = snapshots.filter { snapshot in
+            (showFiveHour && snapshot.fiveHour != nil) || (showSevenDay && snapshot.sevenDay != nil)
+        }
+        guard !usable.isEmpty else { return [] }
+
+        let appearance = button?.effectiveAppearance ?? NSApp.effectiveAppearance
+        return topUrgentAccounts(from: usable, limit: 2).enumerated().map { index, snapshot in
+            let urgentPct = urgentWindowPercentage(for: snapshot, showFiveHour: showFiveHour, showSevenDay: showSevenDay)
+            let isNearLimit = UsageColorScheme.isNearLimit(percentage: urgentPct)
+            return createAccountGlyph(
+                snapshot: snapshot,
+                isNearLimit: isNearLimit,
+                appearance: appearance,
+                showFiveHour: showFiveHour,
+                showSevenDay: showSevenDay,
+                isMonochrome: isMonochrome,
+                useDashedTrack: isMonochrome && index == 1
+            )
+        }
     }
 
     // MARK: - Utility Icons
@@ -541,23 +717,11 @@ class MenuBarIconRenderer {
         let showPlaceholder = settings.displayMode == .custom
 
         switch type {
-        case .fiveHour:
-            let percentage = data.fiveHour?.percentage ?? (showPlaceholder ? 0 : nil)
-            guard let percentage = percentage else { return nil }
-            if isMonochrome {
-                return createCircleTemplateImage(percentage: percentage, size: NSSize(width: 18, height: 18), button: button, removeBackground: true)
-            } else {
-                return createCircleImage(percentage: percentage, size: NSSize(width: 18, height: 18), button: button, removeBackground: removeBackground)
-            }
-
-        case .sevenDay:
-            let percentage = data.sevenDay?.percentage ?? (showPlaceholder ? 0 : nil)
-            guard let percentage = percentage else { return nil }
-            if isMonochrome {
-                return createCircleTemplateImage(percentage: percentage, size: NSSize(width: 18, height: 18), useSevenDayStyle: true, button: button, removeBackground: true)
-            } else {
-                return createCircleImage(percentage: percentage, size: NSSize(width: 18, height: 18), useSevenDayColor: true, button: button, removeBackground: removeBackground)
-            }
+        case .fiveHour, .sevenDay:
+            // P05: Claude 的 5h/7d 圆形指标已被账户组合图标（`createAccountGlyph`，
+            // 外圈进度环 + 内圈饼形扇区）取代，由 `createIcon` 单独通过
+            // `createAccountGlyphIcons` 驱动，不再经由 `createIconForType` 渲染。
+            return nil
 
         case .opusWeekly:
             let percentage = data.opus?.percentage ?? (showPlaceholder ? 0 : nil)

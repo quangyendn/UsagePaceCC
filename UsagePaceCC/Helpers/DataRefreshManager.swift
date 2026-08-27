@@ -297,8 +297,9 @@ class DataRefreshManager: ObservableObject {
 
     /// 合并单个账户的 Claude 拉取结果：成功则更新数据并清错误；失败则仅标记错误，
     /// 保留该账户上一次成功拉取的数据，使该行降级为"过期数据+错误"而非清空（错误隔离）
-    /// - Note: `NotificationManager.checkAndNotify` 目前仍通过 `currentAccountId` 内部解析账户 ID，
-    ///   可能与实际拉取的 `account` 不一致；TODO(phase-05) 将改为显式传入 `accountId:` 参数
+    /// - Note: `NotificationManager.checkAndNotify` 现在显式接收本次拉取的 `account.id`
+    ///   （P05），不再依赖内部的 `currentAccountId` 解析，确保后台（非当前选中）账户的
+    ///   通知也能正确归因到实际拉取的账户。
     private func mergeClaudeResult(account: Account, result: Result<UsageData, Error>) {
         switch result {
         case .success(let data):
@@ -307,8 +308,7 @@ class DataRefreshManager: ObservableObject {
             claudeErrorByAccount[account.id] = nil
 
             if settings.notificationsEnabled {
-                // TODO(phase-05): 传入显式 accountId，替代 NotificationManager 内部的 currentAccountId 解析
-                NotificationManager.shared.checkAndNotify(usageData: data, previousData: previousData)
+                NotificationManager.shared.checkAndNotify(usageData: data, previousData: previousData, accountId: account.id, accountDisplayName: account.displayName)
             }
 
             let newResetsAt = data.resetsAt
