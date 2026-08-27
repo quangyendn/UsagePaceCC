@@ -70,6 +70,10 @@ class MenuBarManager: ObservableObject {
     @Published var hasAvailableUpdate = false
     /// 最新版本号（从 dataManager 同步）
     @Published var latestVersion: String?
+    /// 所有已保存的 Claude 账户快照（从 dataManager 同步，P03 code-review fix 1）：
+    /// 与 usageData/codexUsageData/errorMessage 走同一套 Combine 同步 + Binding 机制，
+    /// 保证 popover 打开后异步刷新落地时这份数据也能跟着更新，而不是构造时的一次性快照。
+    @Published var claudeSnapshots: [AccountUsageSnapshot] = []
     /// 用户已确认的版本号（点击检查更新后记录）
     private var acknowledgedVersion: String?
 
@@ -127,6 +131,9 @@ class MenuBarManager: ObservableObject {
 
         dataManager.$latestVersion
             .assign(to: &$latestVersion)
+
+        dataManager.$claudeSnapshots
+            .assign(to: &$claudeSnapshots)
     }
     
     /// 处理菜单栏图标点击事件
@@ -342,6 +349,10 @@ class MenuBarManager: ObservableObject {
             shouldShowUpdateBadge: Binding(
                 get: { self.shouldShowUpdateBadge },
                 set: { _ in }
+            ),
+            claudeSnapshots: Binding(
+                get: { self.claudeSnapshots },
+                set: { self.claudeSnapshots = $0 }
             )
         ))
 
@@ -357,7 +368,9 @@ class MenuBarManager: ObservableObject {
             usageData: usageData,
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
-            graphDisplayType: settings.graphDisplayType
+            graphDisplayType: settings.graphDisplayType,
+            claudeSnapshots: dataManager.claudeSnapshots,
+            codexAccount: settings.currentCodexAccount
         )
         return NSSize(width: PopoverLayout.width, height: PopoverLayout.height(rowCount: rowCount))
     }

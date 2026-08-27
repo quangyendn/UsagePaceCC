@@ -68,15 +68,44 @@ struct AnimationTypeHintView: View {
 
 /// 统一的限制行组件（支持所有 Claude 和 Codex 限制类型）
 struct UnifiedLimitRow: View {
-    let type: LimitType
+    /// Legacy single-account path (unchanged by P03) — nil when constructed via `init(accountItem:showRemainingMode:)`.
+    var type: LimitType? = nil
     var data: UsageData? = nil
     var codexData: CodexUsageData? = nil
+    /// New account-driven path (P03): 5h/7d Claude rows + the Codex primary-wrapped row.
+    var accountItem: LegendRowItem? = nil
     let showRemainingMode: Bool
+
+    init(type: LimitType, data: UsageData? = nil, codexData: CodexUsageData? = nil, showRemainingMode: Bool) {
+        self.type = type
+        self.data = data
+        self.codexData = codexData
+        self.accountItem = nil
+        self.showRemainingMode = showRemainingMode
+    }
+
+    /// New account-driven row (P03): label = `{first 5 chars of displayName} {5h|7d}`, swatch =
+    /// `snapshot.color.swiftUIColor`, value = `{percentage}% · {MM/dd HH:mm}` (fixed 24h format).
+    init(accountItem: LegendRowItem, showRemainingMode: Bool) {
+        self.type = nil
+        self.data = nil
+        self.codexData = nil
+        self.accountItem = accountItem
+        self.showRemainingMode = showRemainingMode
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            // 图标（含百分比数字和进度弧）
-            MiniProgressIcon(type: type, color: iconColor, percentage: percentageValue ?? 0)
+            // 图标（含百分比数字和进度弧）；账户驱动行在接近限额时叠加红色警示环（code-review
+            // fix 5），与图表点 `LinearUsageGraphView.drawAccountDot` 的红环叠加同一套视觉语言——
+            // 账户色仍是主色，红环只是叠加的紧迫度信号，不是替换。
+            MiniProgressIcon(type: iconShapeType, color: swatchColor, percentage: percentageValue ?? 0)
+                .overlay(
+                    Circle()
+                        .stroke(Color.red, lineWidth: 1.5)
+                        .padding(-2)
+                        .opacity(isNearLimit ? 1 : 0)
+                )
 
             // 限制类型名称
             Text(limitName)
@@ -107,7 +136,53 @@ struct UnifiedLimitRow: View {
 
     // MARK: - Computed Properties
 
+    /// Icon shape passed to `MiniProgressIcon` — account-driven rows reuse the 5h/7d shapes keyed by
+    /// `window`, legacy rows keep using their own `type`.
+    private var iconShapeType: LimitType {
+        if let accountItem {
+            // Mirror `limitName`'s provider-aware branching (code-review fix 4): a Codex account row
+            // must use the Codex icon shape (`.codexPrimary`, same as the pre-existing legacy Codex
+            // path used), not Claude's fiveHour/sevenDay shape just because it borrows the `.fiveHour`
+            // window slot (see `AccountUsageSnapshot.codexWrapper`).
+            if accountItem.snapshot.provider == .codex {
+                return .codexPrimary
+            }
+            return accountItem.window == .fiveHour ? .fiveHour : .sevenDay
+        }
+        return type ?? .fiveHour
+    }
+
+    /// Whether this row's swatch should carry the near-limit warning ring (code-review fix 5).
+    /// Only meaningful for account-driven rows — legacy rows already color the whole swatch by
+    /// percentage via `iconColor`'s per-`LimitType` palette combined with `MiniProgressIcon`'s
+    /// percentage-driven arc, so they don't need a separate danger signal.
+    private var isNearLimit: Bool {
+        guard accountItem != nil, let percentage = percentageValue else { return false }
+        return UsageColorScheme.isNearLimit(percentage: percentage)
+    }
+
+    /// Swatch color: account-driven rows (P03) use `snapshot.color.swiftUIColor` (unifies legend swatch
+    /// and chart dot color); legacy rows keep the untouched percentage/type-driven `iconColor` below.
+    private var swatchColor: Color {
+        if let accountItem {
+            return accountItem.snapshot.color.swiftUIColor
+        }
+        return iconColor
+    }
+
     private var limitName: String {
+        if let accountItem {
+            let prefix = String(accountItem.snapshot.displayName.prefix(5))
+            let windowLabel: String
+            if accountItem.snapshot.provider == .codex {
+                // Codex 的窗口长度由 wire 决定，不能沿用 Claude 的 5h/7d 命名（见 plan.md Q4）。
+                windowLabel = L.LimitTypes.codexWindowName(windowSeconds: accountItem.windowUsage?.windowSeconds)
+            } else {
+                windowLabel = accountItem.window == .fiveHour ? L.DetailRow.fiveHour : L.DetailRow.sevenDay
+            }
+            return "\(prefix) \(windowLabel)"
+        }
+
         switch type {
         case .fiveHour:
             return L.DetailRow.fiveHour
@@ -127,9 +202,13 @@ struct UnifiedLimitRow: View {
             return L.DetailRow.extraUsage
         case .codexExtraUsage:
             return L.LimitTypes.codexExtraUsage
+        case nil:
+            return ""
         }
     }
 
+    /// Legacy per-`LimitType` palette (unchanged by P03 — still the only color source for Circular
+    /// mode's rows, and for the legacy Linear-mode rows that stayed on this path).
     private var iconColor: Color {
         switch type {
         case .fiveHour:
@@ -148,10 +227,15 @@ struct UnifiedLimitRow: View {
             return Color(red: 96/255.0, green: 165/255.0, blue: 250/255.0)   // #60A5FA
         case .codexExtraUsage:
             return Color(red: 245/255.0, green: 158/255.0, blue: 11/255.0)    // #F59E0B
+        case nil:
+            return .gray
         }
     }
 
     private var percentageValue: Double? {
+        if let accountItem {
+            return accountItem.windowUsage?.percentage
+        }
         switch type {
         case .fiveHour:       return data?.fiveHour?.percentage
         case .sevenDay:       return data?.sevenDay?.percentage
@@ -161,11 +245,21 @@ struct UnifiedLimitRow: View {
         case .codexPrimary:   return codexData?.primary?.percentage
         case .codexSecondary: return codexData?.secondary?.percentage
         case .codexExtraUsage: return codexData?.extraUsage?.percentage
+        case nil: return nil
         }
     }
 
     private var displayValue: String {
+        if let accountItem {
+            // 固定 `{percentage}% · {MM/dd HH:mm}` 格式（24h，locale 无关），不随 showRemainingMode 切换——
+            // 新格式没有「剩余额度」变体，spec §7 只定义了这一种呈现方式。
+            guard let usage = accountItem.windowUsage, let resetsAt = usage.resetsAt else { return "-" }
+            return "\(Int(usage.percentage))% · \(TimeFormatHelper.formatFixed(resetsAt))"
+        }
+
         switch type {
+        case nil:
+            return "-"
         case .fiveHour:
             guard let fiveHour = data?.fiveHour else { return "-" }
             return showRemainingMode ? fiveHour.formattedCompactRemaining : detailCompactResetTime(fiveHour)

@@ -37,6 +37,16 @@ enum UsageColorScheme {
         return isDarkMode(for: nil)
     }
 
+
+    // MARK: - 临近上限阈值（P03/P05 共用）
+
+    /// 是否已「临近上限」，用于图表/图例/图标共用的警示叠加层。
+    /// 沿用现有 5 小时限制配色的危险阈值（≥90% 红色），而非另起一套阈值——
+    /// 详见 plan.md Open Question 2。
+    static func isNearLimit(percentage: Double) -> Bool {
+        percentage >= 90
+    }
+
     // MARK: - 5小时限制配色（绿→橙→红）
 
     /// 根据5小时限制使用百分比返回 NSColor

@@ -23,7 +23,13 @@ struct UsageDetailView: View {
     @Binding var hasAvailableUpdate: Bool
     /// 是否应显示更新徽章（用户未确认时才显示徽章）
     @Binding var shouldShowUpdateBadge: Bool
-    
+    /// 所有已保存的 Claude 账户快照（P03）。驱动 Linear 模式下新的账户驱动图表点/图例行。
+    /// 与 usageData/codexUsageData/errorMessage 一样是 @Binding（code-review fix 1）：popover
+    /// 打开时是同步构造的，异步刷新落地后必须能通过这个 binding 反映到已打开的 popover 里，
+    /// 而不是构造时的一次性快照——否则整个 popover 打开期间 5h/7d 内容永远空白/过期。
+    /// Circular 模式完全不消费此属性（P03 correction 1）。
+    @Binding var claudeSnapshots: [AccountUsageSnapshot]
+
     /// 加载动画效果类型
     enum LoadingAnimationType: Int, CaseIterable {
         case rainbow = 0   // 彩虹渐变旋转
@@ -100,8 +106,42 @@ struct UsageDetailView: View {
         )
     }
 
+    /// 新的账户驱动图例行（P03，仅 Linear 模式消费）：`claudeSnapshots` 的 5h/7d 行
+    /// + Codex 单账户包装出的 primary 行。
+    private var legendItems: [LegendRowItem] {
+        PopoverLayout.legendItems(
+            claudeSnapshots: claudeSnapshots,
+            codexUsageData: codexUsageData,
+            codexAccount: UserSettings.shared.currentCodexAccount,
+            activeDisplayTypes: UserSettings.shared.getActiveDisplayTypes(
+                usageData: usageData,
+                codexUsageData: codexUsageData
+            )
+        )
+    }
+
+    /// Linear 模式下仍走旧路径的类型（opus/sonnet/extra/codexSecondary/codexExtraUsage）——
+    /// `legendItems` 已经覆盖的 5h/7d/codexPrimary 被过滤掉，避免重复渲染。
+    private var linearLegacyTypes: [LimitType] {
+        PopoverLayout.linearLegacyTypes(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            codexErrorMessage: codexErrorMessage
+        )
+    }
+
+    /// Circular 沿用改动前的规则（`legendTypes.count`）；Linear 模式实际渲染的行数是
+    /// `legendItems.count + linearLegacyTypes.count`（同 `PopoverLayout.rowCount` 的 Linear 分支），
+    /// 用 `legendTypes.count` 在 Linear 模式下会数错行数，导致行间距与实际渲染的行数不匹配（code-review fix 6）。
     private var contentSpacing: CGFloat {
-        legendTypes.count >= 2 ? 10 : 16
+        let rowCount: Int
+        switch UserSettings.shared.graphDisplayType {
+        case .circular:
+            rowCount = legendTypes.count
+        case .linear:
+            rowCount = legendItems.count + linearLegacyTypes.count
+        }
+        return rowCount >= 2 ? 10 : 16
     }
 
     private var contentWidth: CGFloat {
@@ -113,7 +153,9 @@ struct UsageDetailView: View {
             usageData: usageData,
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
-            graphDisplayType: UserSettings.shared.graphDisplayType
+            graphDisplayType: UserSettings.shared.graphDisplayType,
+            claudeSnapshots: claudeSnapshots,
+            codexAccount: UserSettings.shared.currentCodexAccount
         )
         return PopoverLayout.height(rowCount: rowCount)
     }
@@ -245,12 +287,23 @@ struct UsageDetailView: View {
         }
     }
 
-    /// legend 区域：`legendTypes` 里 Claude 类型走 `data:`，Codex 类型走 `codexData:`。
-    /// 单一类型时是否展开成双 InfoRow 由 `PopoverLayout.expandsToTwoInfoRows` 判定——
-    /// 高度计算用的是同一个判定，两边必须问同一个问题；不展开的单类型仍然渲染一行
-    /// `UnifiedLimitRow`，「选中的类型一行都不画」本身就是 bug。
+    /// legend 区域：Circular 模式完全沿用改动前的实现（P03 correction 1，不改一行）；
+    /// Linear 模式改走新的账户驱动渲染（`legendItems`）+ 仍留在旧路径上的类型（`linearLegacyTypes`）。
     @ViewBuilder
     private var legendSection: some View {
+        if UserSettings.shared.graphDisplayType == .circular {
+            circularLegendSection
+        } else {
+            linearLegendSection
+        }
+    }
+
+    /// Circular 模式的 legend（未改动，原样从 P03 之前的 `legendSection` 搬迁过来）：`legendTypes`
+    /// 里 Claude 类型走 `data:`，Codex 类型走 `codexData:`。单一类型时是否展开成双 InfoRow 由
+    /// `PopoverLayout.expandsToTwoInfoRows` 判定——高度计算用的是同一个判定，两边必须问同一个问题；
+    /// 不展开的单类型仍然渲染一行 `UnifiedLimitRow`，「选中的类型一行都不画」本身就是 bug。
+    @ViewBuilder
+    private var circularLegendSection: some View {
         VStack(spacing: 8) {
             let types = legendTypes
 
@@ -309,6 +362,33 @@ struct UsageDetailView: View {
                     UnifiedLimitRow(type: singleType, codexData: codexUsageData, showRemainingMode: showRemainingMode)
                 }
             }
+        }
+        .padding(.horizontal, 14)
+    }
+
+    /// Linear 模式的 legend（P03 新增）：账户驱动的 5h/7d/codexPrimary 行（新格式，见
+    /// `UnifiedLimitRow.init(accountItem:showRemainingMode:)`）+ 仍留在旧路径上的类型
+    /// （opus/sonnet/extra/codexSecondary/codexExtraUsage，渲染方式完全不变）。
+    /// 两个 ForEach 加起来的行数必须与 `PopoverLayout.rowCount`（Linear 分支）逐行对应，
+    /// 否则会出现空白或裁剪（Locked Constraint 2）。
+    @ViewBuilder
+    private var linearLegendSection: some View {
+        VStack(spacing: 5) {
+            ForEach(legendItems) { item in
+                UnifiedLimitRow(accountItem: item, showRemainingMode: showRemainingMode)
+            }
+            ForEach(linearLegacyTypes, id: \.self) { type in
+                if type.provider == .claude {
+                    UnifiedLimitRow(type: type, data: usageData, showRemainingMode: showRemainingMode)
+                } else {
+                    UnifiedLimitRow(type: type, codexData: codexUsageData, showRemainingMode: showRemainingMode)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) { showRemainingMode.toggle() }
+            savedRemainingMode = showRemainingMode
         }
         .padding(.horizontal, 14)
     }
@@ -639,6 +719,7 @@ struct UsageDetailView_Previews: PreviewProvider {
     @StateObject static var refreshState = RefreshState()
     @State static var hasUpdate = false
     @State static var shouldShowBadge = false
+    @State static var snapshots: [AccountUsageSnapshot] = []
 
     static var previews: some View {
         UsageDetailView(
@@ -648,7 +729,8 @@ struct UsageDetailView_Previews: PreviewProvider {
             codexErrorMessage: $codexErrorMsg,
             refreshState: refreshState,
             hasAvailableUpdate: $hasUpdate,
-            shouldShowUpdateBadge: $shouldShowBadge
+            shouldShowUpdateBadge: $shouldShowBadge,
+            claudeSnapshots: $snapshots
         )
     }
 }
