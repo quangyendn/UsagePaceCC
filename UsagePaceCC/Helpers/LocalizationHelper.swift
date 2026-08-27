@@ -548,9 +548,17 @@ enum L {
         static func warningBody(_ type: String, _ percentage: Int) -> String {
             String(format: localized("notification.warning_body"), type, percentage)
         }
+        /// 带账户名前缀的用量警告正文（P05 多账户场景，区分不同账户触发的通知）
+        static func warningBody(accountName: String, type: String, percentage: Int) -> String {
+            String(format: localized("notification.warning_body_with_account"), accountName, type, percentage)
+        }
         static var resetTitle: String { localized("notification.reset_title") }
         static func resetBody(_ type: String) -> String {
             String(format: localized("notification.reset_body"), type)
+        }
+        /// 带账户名前缀的用量重置正文（P05 多账户场景，区分不同账户触发的通知）
+        static func resetBody(accountName: String, type: String) -> String {
+            String(format: localized("notification.reset_body_with_account"), accountName, type)
         }
     }
 

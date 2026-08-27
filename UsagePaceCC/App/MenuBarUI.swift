@@ -516,14 +516,14 @@ class MenuBarUI {
     ///   - codexUsageData: Codex 用量数据
     ///   - hasUpdate: 是否有可用更新
     ///   - shouldShowBadge: 是否显示更新徽章
-    func updateMenuBarIcon(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, hasUpdate: Bool, shouldShowBadge: Bool) {
+    func updateMenuBarIcon(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], hasUpdate: Bool, shouldShowBadge: Bool) {
         guard let button = statusItem.button else { return }
 
         // 确定是否实际显示徽章
         let showBadge = hasUpdate && shouldShowBadge
 
         // 生成缓存键
-        let cacheKey = generateCacheKey(usageData: usageData, codexUsageData: codexUsageData, hasUpdate: showBadge)
+        let cacheKey = generateCacheKey(usageData: usageData, codexUsageData: codexUsageData, claudeSnapshots: claudeSnapshots, hasUpdate: showBadge)
 
         // 尝试从缓存获取
         if let cachedImage = iconCache[cacheKey] {
@@ -535,6 +535,7 @@ class MenuBarUI {
         let icon = iconRenderer.createIcon(
             usageData: usageData,
             codexUsageData: codexUsageData,
+            claudeSnapshots: claudeSnapshots,
             hasUpdate: showBadge,
             button: button
         )
@@ -557,10 +558,21 @@ class MenuBarUI {
     /// - Parameters:
     ///   - usageData: Claude 用量数据
     ///   - codexUsageData: Codex 用量数据
+    ///   - claudeSnapshots: 所有已保存 Claude 账户的用量快照（P05）；账户组合图标由
+    ///     `topUrgentAccounts` 从中选出，其内容变化（哪怕主账户 usageData 未变）也必须
+    ///     反映到缓存键中，否则会返回过期的图标组合（陈旧账户/颜色/百分比）。
     ///   - hasUpdate: 是否有更新徽章
     /// - Returns: 缓存键字符串
-    private func generateCacheKey(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, hasUpdate: Bool) -> String {
+    private func generateCacheKey(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], hasUpdate: Bool) -> String {
         let isMulti = settings.isMultiProviderActive
+        let accountsFingerprint = topUrgentAccounts(from: claudeSnapshots, limit: 2)
+            .map { snapshot -> String in
+                let fiveHour = snapshot.fiveHour.map { "\(Int($0.percentage))" } ?? "nil"
+                let sevenDay = snapshot.sevenDay.map { "\(Int($0.percentage))" } ?? "nil"
+                return "\(snapshot.accountId.uuidString):\(snapshot.color.rawValue):\(fiveHour):\(sevenDay)"
+            }
+            .joined(separator: "|")
+
         guard let data = usageData else {
             var key = "no_data_\(settings.iconDisplayMode.rawValue)_\(settings.iconStyleMode.rawValue)_\(settings.displayMode.rawValue)_mp\(isMulti)"
             if let codex = codexUsageData {
@@ -596,6 +608,8 @@ class MenuBarUI {
                 key += "_badge"
             }
 
+            key += "_acc[\(accountsFingerprint)]"
+
             return key
         }
 
@@ -626,6 +640,8 @@ class MenuBarUI {
         if hasUpdate {
             key += "_badge"
         }
+
+        key += "_acc[\(accountsFingerprint)]"
 
         return key
     }

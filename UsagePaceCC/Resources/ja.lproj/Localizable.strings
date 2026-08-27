@@ -398,8 +398,10 @@
 "notification.description" = "いずれかの制限が90%%に達した時、または使用量がリセットされた時にシステム通知を送信します。";
 "notification.warning_title" = "使用量警告";
 "notification.warning_body" = "%@が%d%%の使用量に達しました";
+"notification.warning_body_with_account" = "%@ · %@が%d%%の使用量に達しました";
 "notification.reset_title" = "使用量リセット";
 "notification.reset_body" = "%@の使用量がリセットされました";
+"notification.reset_body_with_account" = "%@ · %@の使用量がリセットされました";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "Claude にサインイン";
