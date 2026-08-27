@@ -37,33 +37,6 @@ struct MiniProgressIcon: View {
     }
 }
 
-// MARK: - Animation Type Hint View
-
-/// 动画类型切换提示（长按圆环后显示），Claude 列和 Codex 列共用
-struct AnimationTypeHintView: View {
-    let animationTypeName: String
-
-    private let rainbowColors: [Color] = [.red, .orange, .yellow, .green, .blue, .purple]
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(colors: rainbowColors, startPoint: .leading, endPoint: .trailing)
-                )
-            Text(L.LoadingAnimation.current(animationTypeName))
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-                .foregroundStyle(
-                    LinearGradient(colors: rainbowColors, startPoint: .leading, endPoint: .trailing)
-                )
-        }
-        .padding(.horizontal, 12)
-        .fixedSize(horizontal: true, vertical: true)
-    }
-}
-
 // MARK: - Unified Limit Row Component
 
 /// 统一的限制行组件（支持所有 Claude 和 Codex 限制类型）
@@ -207,8 +180,8 @@ struct UnifiedLimitRow: View {
         }
     }
 
-    /// Legacy per-`LimitType` palette (unchanged by P03 — still the only color source for Circular
-    /// mode's rows, and for the legacy Linear-mode rows that stayed on this path).
+    /// Legacy per-`LimitType` palette (unchanged by P03 — still the color source for the
+    /// legacy single-account rows that stayed on this path).
     private var iconColor: Color {
         switch type {
         case .fiveHour:

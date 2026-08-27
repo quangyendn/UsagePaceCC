@@ -288,23 +288,6 @@ enum AppAppearance: String, CaseIterable, Codable {
         }
     }
 }
-/// 图表显示类型（圆形 vs 线性）
-enum GraphDisplayType: String, CaseIterable, Codable {
-    /// 圆形图表 - 当前百分比环形显示
-    case circular = "circular"
-    /// 线性图表 - 时间轴与用量预测显示
-    case linear = "linear"
-
-    var localizedName: String {
-        switch self {
-        case .circular:
-            return L.GraphType.circular
-        case .linear:
-            return L.GraphType.linear
-        }
-    }
-}
-
 /// 应用语言选项
 enum AppLanguage: String, CaseIterable, Codable {
     /// 英语
@@ -816,14 +799,6 @@ class UserSettings: ObservableObject {
         }
     }
 
-    /// 图表显示类型（圆形/线性）
-    @Published var graphDisplayType: GraphDisplayType {
-        didSet {
-            defaults.set(graphDisplayType.rawValue, forKey: "graphDisplayType")
-            NotificationCenter.default.post(name: .settingsChanged, object: nil)
-        }
-    }
-
     /// 是否为首次启动标记
     @Published var isFirstLaunch: Bool {
         didSet {
@@ -1233,14 +1208,6 @@ class UserSettings: ObservableObject {
             self.customDisplayTypes = [.fiveHour, .sevenDay]
         }
 
-        // 加载图表显示类型，默认为圆形
-        if let typeString = defaults.string(forKey: "graphDisplayType"),
-           let type = GraphDisplayType(rawValue: typeString) {
-            self.graphDisplayType = type
-        } else {
-            self.graphDisplayType = .circular
-        }
-
         // 检查是否首次启动（如果没有保存过认证信息，就是首次启动）
         if !defaults.bool(forKey: "hasLaunched") {
             self.isFirstLaunch = true
@@ -1375,7 +1342,6 @@ class UserSettings: ObservableObject {
         displayMode = .smart
         customDisplayTypes = [.fiveHour, .sevenDay, .extraUsage]
         notificationsEnabled = true
-        graphDisplayType = .circular
 
         // 重置智能模式状态
         lastUtilization = nil
@@ -1567,6 +1533,22 @@ class UserSettings: ObservableObject {
         accounts[index].alias = alias
         let displayName = accounts[index].displayName
         Logger.settings.notice("更新账户别名: \(displayName)")
+    }
+
+    /// 更新账户颜色
+    /// - Parameters:
+    ///   - accountId: 要更新的账户 ID
+    ///   - color: 新的账户颜色
+    func updateAccountColor(accountId: UUID, to color: AccountColor) {
+        if let index = accounts.firstIndex(where: { $0.id == accountId }) {
+            accounts[index].color = color
+        } else if let index = codexAccounts.firstIndex(where: { $0.id == accountId }) {
+            codexAccounts[index].color = color
+        } else {
+            return
+        }
+        // 仅重建快照的颜色字段，不发起网络请求；已缓存的用量数据保持不变
+        NotificationCenter.default.post(name: .accountColorChanged, object: nil)
     }
 
     /// 用于显示的账户列表

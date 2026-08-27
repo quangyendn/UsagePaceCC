@@ -356,12 +356,6 @@
 "extra_usage.detail_credits_balance" = "%d クレジット";
 "extra_usage.detail_credits_remaining" = "残り %d クレジット";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "レインボーグラデーション";
-"loading_animation.dashed" = "破線回転";
-"loading_animation.pulse" = "パルス効果";
-"loading_animation.current" = "読み込みアニメーション: %@";
-
 // MARK: - Time Format
 "time_format.system" = "システムに従う";
 "time_format.twelve_hour" = "12時間制（午後 2:30）";
@@ -427,13 +421,3 @@
 "account.codex_accounts" = "Codex アカウント";
 "account.add_codex_account" = "Codex アカウントを追加";
 "account.codex_current_account" = "現在の Codex アカウント";
-
-// MARK: - Graph Type
-"graph_type.circular" = "サークル";
-"graph_type.linear" = "ライン";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "グラフスタイル";
-"graph_style.hint" = "使用量の表示方法を選択";
-"graph_style.circular_description" = "使用量をパーセントリングで表示";
-"graph_style.linear_description" = "使用量をタイムラインとペース予測で表示";

@@ -27,26 +27,7 @@ struct UsageDetailView: View {
     /// 与 usageData/codexUsageData/errorMessage 一样是 @Binding（code-review fix 1）：popover
     /// 打开时是同步构造的，异步刷新落地后必须能通过这个 binding 反映到已打开的 popover 里，
     /// 而不是构造时的一次性快照——否则整个 popover 打开期间 5h/7d 内容永远空白/过期。
-    /// Circular 模式完全不消费此属性（P03 correction 1）。
     @Binding var claudeSnapshots: [AccountUsageSnapshot]
-
-    /// 加载动画效果类型
-    enum LoadingAnimationType: Int, CaseIterable {
-        case rainbow = 0   // 彩虹渐变旋转
-        case dashed = 1    // 虚线旋转
-        case pulse = 2     // 脉冲效果
-
-        var name: String {
-            switch self {
-            case .rainbow: return L.LoadingAnimation.rainbow
-            case .dashed: return L.LoadingAnimation.dashed
-            case .pulse: return L.LoadingAnimation.pulse
-            }
-        }
-    }
-
-    // Claude 加载动画类型（可长按圆环切换，仅圆形模式生效）
-    @State var claudeAnimationType: LoadingAnimationType = .rainbow
 
     /// 菜单操作类型
     enum MenuAction {
@@ -64,11 +45,6 @@ struct UsageDetailView: View {
     // 用于动画的状态（改为从外部传入，避免每次重建视图时重置）
     @State var rotationAngle: Double = 0
     @State var animationTimer: Timer?
-    // 显示动画类型切换提示
-    @State private var showAnimationTypeHint = false
-    @State private var animationTypeHintName = ""
-    @State private var animationTypeHintProvider: ProviderType?
-    @State private var animationTypeHintDismissWorkItem: DispatchWorkItem?
     // 显示更新通知
     @State private var showUpdateNotification = false
     // 显示模式切换（false: 重置时间, true: 剩余时间）
@@ -81,32 +57,13 @@ struct UsageDetailView: View {
         refreshState.isRefreshingProvider(.claude)
     }
 
-    /// 获取当前 Claude 活动的显示类型
-    var activeDisplayTypes: [LimitType] {
-        guard let data = usageData else { return [] }
-        return UserSettings.shared.getActiveDisplayTypes(usageData: data)
-            .filter { $0.provider == .claude }
-    }
-
     /// 头部展示的 Provider：Claude 数据存在或 Claude 凭据有效时用 Claude 品牌，
     /// 否则（Codex-only）用 Codex 品牌。
     private var primaryProvider: ProviderType {
         (usageData != nil || UserSettings.shared.hasValidCredentials) ? .claude : .codex
     }
 
-    /// 单列弹出窗口的 legend 类型列表（P06 D1/D5′）。
-    /// 规则全部收在 `PopoverLayout.legendTypes` 里，供本视图和高度计算共用——两处各写一份
-    /// 正是「布局按 3 行留高、视图只画 2 行」那类永久空白的来源。
-    private var legendTypes: [LimitType] {
-        PopoverLayout.legendTypes(
-            usageData: usageData,
-            codexUsageData: codexUsageData,
-            codexErrorMessage: codexErrorMessage,
-            graphDisplayType: UserSettings.shared.graphDisplayType
-        )
-    }
-
-    /// 新的账户驱动图例行（P03，仅 Linear 模式消费）：`claudeSnapshots` 的 5h/7d 行
+    /// 新的账户驱动图例行：`claudeSnapshots` 的 5h/7d 行
     /// + Codex 单账户包装出的 primary 行。
     private var legendItems: [LegendRowItem] {
         PopoverLayout.legendItems(
@@ -130,17 +87,10 @@ struct UsageDetailView: View {
         )
     }
 
-    /// Circular 沿用改动前的规则（`legendTypes.count`）；Linear 模式实际渲染的行数是
-    /// `legendItems.count + linearLegacyTypes.count`（同 `PopoverLayout.rowCount` 的 Linear 分支），
-    /// 用 `legendTypes.count` 在 Linear 模式下会数错行数，导致行间距与实际渲染的行数不匹配（code-review fix 6）。
+    /// 实际渲染的行数是 `legendItems.count + linearLegacyTypes.count`
+    /// （同 `PopoverLayout.rowCount`），行间距据此调整。
     private var contentSpacing: CGFloat {
-        let rowCount: Int
-        switch UserSettings.shared.graphDisplayType {
-        case .circular:
-            rowCount = legendTypes.count
-        case .linear:
-            rowCount = legendItems.count + linearLegacyTypes.count
-        }
+        let rowCount = legendItems.count + linearLegacyTypes.count
         return rowCount >= 2 ? 10 : 16
     }
 
@@ -153,7 +103,6 @@ struct UsageDetailView: View {
             usageData: usageData,
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
-            graphDisplayType: UserSettings.shared.graphDisplayType,
             claudeSnapshots: claudeSnapshots,
             codexAccount: UserSettings.shared.currentCodexAccount
         )
@@ -206,51 +155,12 @@ struct UsageDetailView: View {
         .padding()
     }
 
-    /// Codex-only + Circular 模式的空态（D5′ 制造的空档，绝不能空白）。
-    /// 图标 + 一行说明 + 一个把 `graphDisplayType` 切到 `.linear` 的按钮。
-    @ViewBuilder
-    var codexCircularUnsupportedView: some View {
-        VStack(spacing: 8) {
-            if let icon = ImageHelper.createCodexIcon(size: 32) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 32, height: 32)
-            } else {
-                Image(systemName: "chart.xyaxis.line")
-                    .font(.system(size: 28))
-                    .foregroundColor(.secondary)
-            }
-
-            Text(L.Usage.codexCircularUnsupported)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 20)
-
-            Button(action: {
-                UserSettings.shared.graphDisplayType = .linear
-            }) {
-                Text(L.Usage.switchToLinear)
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.15))
-                    .foregroundColor(.blue)
-                    .cornerRadius(6)
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     /// Codex 的紧凑错误行（P06 新增）：`codexOnlyMainContent` 曾是 `codexErrorMessage`
     /// 唯一的渲染出口，删除它之后必须在这里补上——CLI token 大约每 10 天过期一次，
     /// 这是常规路径，不是边角情况。占据一个 legend 行的位置，点按跳转到 Auth 设置。
-    /// 仅在 Linear 模式下出现：D5′ 下 Circular 模式完全不展示任何 Codex 元素。
     @ViewBuilder
     private var codexErrorRow: some View {
-        if UserSettings.shared.graphDisplayType == .linear, let error = codexErrorMessage {
+        if let error = codexErrorMessage {
             Button(action: {
                 onMenuAction?(.authSettings)
             }) {
@@ -287,86 +197,13 @@ struct UsageDetailView: View {
         }
     }
 
-    /// legend 区域：Circular 模式完全沿用改动前的实现（P03 correction 1，不改一行）；
-    /// Linear 模式改走新的账户驱动渲染（`legendItems`）+ 仍留在旧路径上的类型（`linearLegacyTypes`）。
+    /// legend 区域：账户驱动渲染（`legendItems`）+ 仍留在旧路径上的类型（`linearLegacyTypes`）。
     @ViewBuilder
     private var legendSection: some View {
-        if UserSettings.shared.graphDisplayType == .circular {
-            circularLegendSection
-        } else {
-            linearLegendSection
-        }
+        linearLegendSection
     }
 
-    /// Circular 模式的 legend（未改动，原样从 P03 之前的 `legendSection` 搬迁过来）：`legendTypes`
-    /// 里 Claude 类型走 `data:`，Codex 类型走 `codexData:`。单一类型时是否展开成双 InfoRow 由
-    /// `PopoverLayout.expandsToTwoInfoRows` 判定——高度计算用的是同一个判定，两边必须问同一个问题；
-    /// 不展开的单类型仍然渲染一行 `UnifiedLimitRow`，「选中的类型一行都不画」本身就是 bug。
-    @ViewBuilder
-    private var circularLegendSection: some View {
-        VStack(spacing: 8) {
-            let types = legendTypes
-
-            if types.count >= 2 {
-                VStack(spacing: 5) {
-                    ForEach(types, id: \.self) { type in
-                        if type.provider == .claude {
-                            UnifiedLimitRow(type: type, data: usageData, showRemainingMode: showRemainingMode)
-                        } else {
-                            UnifiedLimitRow(type: type, codexData: codexUsageData, showRemainingMode: showRemainingMode)
-                        }
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) { showRemainingMode.toggle() }
-                    savedRemainingMode = showRemainingMode
-                }
-            } else if types.count == 1 {
-                let singleType = types[0]
-
-                if PopoverLayout.expandsToTwoInfoRows(type: singleType, usageData: usageData),
-                   let data = usageData {
-                    if singleType == .sevenDay, let sevenDay = data.sevenDay {
-                        VStack(spacing: 5) {
-                            InfoRow(
-                                icon: "calendar",
-                                title: L.Usage.sevenDayLimit,
-                                value: sevenDay.formattedResetsInDays,
-                                tintColor: .purple
-                            )
-                            InfoRow(
-                                icon: "calendar.badge.clock",
-                                title: L.Usage.resetDate,
-                                value: sevenDay.formattedResetDateLong,
-                                tintColor: .purple
-                            )
-                        }
-                    } else if let fiveHour = data.fiveHour {
-                        VStack(spacing: 5) {
-                            InfoRow(
-                                icon: "clock.fill",
-                                title: L.Usage.fiveHourLimit,
-                                value: fiveHour.formattedResetsInHours
-                            )
-                            InfoRow(
-                                icon: "arrow.clockwise",
-                                title: L.Usage.resetTime,
-                                value: fiveHour.formattedResetTimeShort
-                            )
-                        }
-                    }
-                } else if singleType.provider == .claude {
-                    UnifiedLimitRow(type: singleType, data: usageData, showRemainingMode: showRemainingMode)
-                } else {
-                    UnifiedLimitRow(type: singleType, codexData: codexUsageData, showRemainingMode: showRemainingMode)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-    }
-
-    /// Linear 模式的 legend（P03 新增）：账户驱动的 5h/7d/codexPrimary 行（新格式，见
+    /// 账户驱动的 5h/7d/codexPrimary 行（新格式，见
     /// `UnifiedLimitRow.init(accountItem:showRemainingMode:)`）+ 仍留在旧路径上的类型
     /// （opus/sonnet/extra/codexSecondary/codexExtraUsage，渲染方式完全不变）。
     /// 两个 ForEach 加起来的行数必须与 `PopoverLayout.rowCount`（Linear 分支）逐行对应，
@@ -585,47 +422,15 @@ struct UsageDetailView: View {
                 headerView(provider: primaryProvider, showsControls: true)
                 mainContent
             }
-            .offset(y: isAnimationHintVisible(for: .claude) ? -18 : 0)
 
-            animationHintView(for: .claude)
             updateNotificationView
             Spacer()
         }
     }
 
-    private func isAnimationHintVisible(for provider: ProviderType) -> Bool {
-        showAnimationTypeHint && animationTypeHintProvider == provider
-    }
-
-    @ViewBuilder
-    private func animationHintView(for provider: ProviderType) -> some View {
-        if isAnimationHintVisible(for: provider) {
-            animationHintContent
-                .transition(.opacity.combined(with: .scale))
-        }
-    }
-
-    @ViewBuilder
-    private func animationHintOverlay(for provider: ProviderType) -> some View {
-        if isAnimationHintVisible(for: provider) {
-            animationHintContent
-                .offset(y: contentSpacing + 2)
-                .transition(.opacity.combined(with: .scale))
-        }
-    }
-
-    private var animationHintContent: some View {
-        AnimationTypeHintView(animationTypeName: animationTypeHintName)
-            .padding(.top, -8)
-            .padding(.bottom, 6)
-            .allowsHitTesting(false)
-    }
-
     var body: some View {
         singleColumnBody
         .frame(width: contentWidth, height: contentHeight)
-        .animation(.easeInOut(duration: 0.25), value: UserSettings.shared.graphDisplayType)
-        .animation(.easeInOut(duration: 0.25), value: showAnimationTypeHint)
         .id(localization.updateTrigger)  // 语言变化时重新创建视图
         .onAppear {
             showRemainingMode = savedRemainingMode
@@ -668,35 +473,14 @@ struct UsageDetailView: View {
             }
         }
         .onDisappear {
-            // 视图消失时清理定时器和重置状态
+            // 视图消失时清理定时器
             stopRotationAnimation()
-            animationTypeHintDismissWorkItem?.cancel()
-            animationTypeHintProvider = nil
         }
         #if DEBUG
         .background(
             UserSettings.shared.debugKeepDetailWindowOpen ? Color.white : Color.clear
         )
         #endif
-    }
-
-    func showAnimationHint(_ animationTypeName: String, provider: ProviderType) {
-        animationTypeHintDismissWorkItem?.cancel()
-        animationTypeHintName = animationTypeName
-        animationTypeHintProvider = provider
-
-        withAnimation(.easeInOut(duration: 0.25)) {
-            showAnimationTypeHint = true
-        }
-
-        let dismissWorkItem = DispatchWorkItem {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                showAnimationTypeHint = false
-                animationTypeHintProvider = nil
-            }
-        }
-        animationTypeHintDismissWorkItem = dismissWorkItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: dismissWorkItem)
     }
 }
 
