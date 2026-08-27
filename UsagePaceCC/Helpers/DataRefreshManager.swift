@@ -747,6 +747,11 @@ class DataRefreshManager: ObservableObject {
         }
     }
 
+    /// 账户颜色变更后仅从已缓存数据重建快照，不发起任何网络请求
+    func handleAccountColorChanged() {
+        rebuildClaudeSnapshots()
+    }
+
     /// 账户切换后只清理并刷新对应 Provider，避免跨账号 previousData 误判重置。
     /// 通知去重状态按账号隔离，切换账号时保留，删除账号时再由 UserSettings 精准清理。
     func handleAccountChanged(provider: ProviderType?) {

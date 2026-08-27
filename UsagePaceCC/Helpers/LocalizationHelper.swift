@@ -71,8 +71,6 @@ enum L {
         static var refreshCooldown: String { localized("usage.refresh_cooldown") }
         static var runDiagnostic: String { localized("usage.run_diagnostic") }
         static var codexTitle: String { localized("usage.codex_title") }
-        static var codexCircularUnsupported: String { localized("usage.codex_circular_unsupported") }
-        static var switchToLinear: String { localized("usage.switch_to_linear") }
     }
     
     // MARK: - Settings Tabs
@@ -497,16 +495,6 @@ enum L {
         }
     }
 
-    // MARK: - Loading Animation
-    enum LoadingAnimation {
-        static var rainbow: String { localized("loading_animation.rainbow") }
-        static var dashed: String { localized("loading_animation.dashed") }
-        static var pulse: String { localized("loading_animation.pulse") }
-        static func current(_ name: String) -> String {
-            String(format: localized("loading_animation.current"), name)
-        }
-    }
-
     // MARK: - Time Format
     enum TimeFormat {
         static var system: String { localized("time_format.system") }
@@ -572,20 +560,6 @@ enum L {
         static var hint: String { localized("settings.general.time_format_hint") }
         static var preview: String { localized("settings.general.time_format_preview") }
     }
-    // MARK: - Graph Type
-    enum GraphType {
-        static var circular: String { localized("graph_type.circular") }
-        static var linear: String { localized("graph_type.linear") }
-    }
-
-    // MARK: - Graph Style Settings
-    enum GraphStyle {
-        static var title: String { localized("graph_style.title") }
-        static var hint: String { localized("graph_style.hint") }
-        static var circularDescription: String { localized("graph_style.circular_description") }
-        static var linearDescription: String { localized("graph_style.linear_description") }
-    }
-
     // MARK: - Helper Methods
     
     /// 本地化字符串辅助方法

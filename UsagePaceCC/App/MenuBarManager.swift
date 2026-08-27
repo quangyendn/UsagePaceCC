@@ -266,6 +266,16 @@ class MenuBarManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // 监听账户颜色变更通知：仅需从已缓存数据重建快照并重绘，无需重新发起网络请求
+        NotificationCenter.default.publisher(for: .accountColorChanged)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.ui.clearIconCache()
+                self.dataManager.handleAccountColorChanged()
+                self.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+
         // 监听 Codex 来源（CLI / Browser）切换，立即用新来源重新拉取，而不是等待下一个刷新周期（见 plan.md D9）
         settings.$codexSource
             .dropFirst()
@@ -368,7 +378,6 @@ class MenuBarManager: ObservableObject {
             usageData: usageData,
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
-            graphDisplayType: settings.graphDisplayType,
             claudeSnapshots: dataManager.claudeSnapshots,
             codexAccount: settings.currentCodexAccount
         )

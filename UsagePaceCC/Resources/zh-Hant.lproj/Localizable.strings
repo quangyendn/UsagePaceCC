@@ -356,12 +356,6 @@
 "extra_usage.detail_credits_balance" = "%d 點";
 "extra_usage.detail_credits_remaining" = "還剩 %d 點";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "彩虹漸變";
-"loading_animation.dashed" = "虛線旋轉";
-"loading_animation.pulse" = "脈衝效果";
-"loading_animation.current" = "載入動畫: %@";
-
 // MARK: - Time Format
 "time_format.system" = "跟隨系統";
 "time_format.twelve_hour" = "12 小時制（下午 2:30）";
@@ -427,13 +421,3 @@
 "account.codex_accounts" = "Codex 帳號";
 "account.add_codex_account" = "新增 Codex 帳號";
 "account.codex_current_account" = "目前的 Codex 帳號";
-
-// MARK: - Graph Type
-"graph_type.circular" = "圓形";
-"graph_type.linear" = "線性";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "圖表樣式";
-"graph_style.hint" = "選擇使用量的顯示方式";
-"graph_style.circular_description" = "以百分比圓環顯示使用量";
-"graph_style.linear_description" = "以時間線和速度預測顯示使用量";
