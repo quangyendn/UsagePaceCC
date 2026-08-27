@@ -17,8 +17,9 @@ class DataRefreshManager: ObservableObject {
 
     // MARK: - Dependencies
 
-    /// Claude API 服务实例
-    private let apiService = ClaudeAPIService()
+    /// 每账户一个 Claude API 服务实例，惰性创建，账户删除时清理
+    /// （不可跨账户共享单一实例：`ClaudeAPIService.currentTask?.cancel()` 会让账户 B 的请求取消账户 A 的请求）
+    private var claudeServices: [UUID: ClaudeAPIService] = [:]
     /// Codex API 服务实例
     private let codexApiService = CodexAPIService()
     /// 更新检查器实例
@@ -30,8 +31,14 @@ class DataRefreshManager: ObservableObject {
 
     // MARK: - Published State
 
-    /// Claude 用量数据
+    /// Claude 用量数据（向后兼容属性：每次合并后从 `settings.accounts` 中排在第一位的 Claude 账户赋值）
     @Published var usageData: UsageData?
+    /// 按账户 ID 索引的 Claude 用量数据（多账户全量拉取，phase 03/05 消费）
+    @Published var claudeUsageByAccount: [UUID: UsageData] = [:]
+    /// 按账户 ID 索引的 Claude 错误信息；某账户拉取失败不影响其他账户的数据
+    @Published var claudeErrorByAccount: [UUID: String] = [:]
+    /// 每账户一份用于渲染的用量快照，顺序与 `settings.accounts` 一致
+    @Published var claudeSnapshots: [AccountUsageSnapshot] = []
     /// Codex 用量数据（nil 表示无 Codex 账号或拉取失败）
     @Published var codexUsageData: CodexUsageData?
     /// 加载状态
@@ -49,8 +56,8 @@ class DataRefreshManager: ObservableObject {
 
     // MARK: - Private State
 
-    /// Claude 上次的重置时间（用于检测重置是否完成）
-    private var lastResetsAt: Date?
+    /// Claude 每账户上次的重置时间（用于检测重置是否完成），按账户 ID 索引
+    private var lastResetsAtByAccount: [UUID: Date] = [:]
     /// Codex 上次的重置时间
     private var lastCodexResetsAt: Date?
     /// 上次手动刷新时间
@@ -129,11 +136,36 @@ class DataRefreshManager: ObservableObject {
         static let dailyUpdate = "dailyUpdate"
     }
 
+    /// 按账户拼接重置验证定时器 ID，避免账户 B 的重置取消/覆盖账户 A 的验证
+    private func resetVerifyTimerId(_ base: String, accountId: UUID) -> String {
+        "\(base):\(accountId.uuidString)"
+    }
+
+    // MARK: - Claude Window Constants
+
+    /// Claude 5 小时窗口时长（秒）：固定值，非数据驱动（与 Codex 不同，Codex 的窗口时长来自 API 响应）
+    private static let claudeFiveHourWindowSeconds: TimeInterval = 18000
+    /// Claude 7 天窗口时长（秒）：固定值，非数据驱动
+    private static let claudeSevenDayWindowSeconds: TimeInterval = 604800
+
     // MARK: - Initialization
 
     init() {
         scheduleDailyUpdateCheck()
         setupWakeObserver()
+    }
+
+    // MARK: - Per-Account Claude Services
+
+    /// 获取（惰性创建）指定账户的 `ClaudeAPIService` 实例
+    /// - Important: 不可跨账户共享同一实例，否则后发起的账户请求会取消先发起的账户请求
+    private func claudeService(for account: Account) -> ClaudeAPIService {
+        if let existing = claudeServices[account.id] {
+            return existing
+        }
+        let service = ClaudeAPIService(account: account)
+        claudeServices[account.id] = service
+        return service
     }
 
     // MARK: - Data Fetching
@@ -170,15 +202,24 @@ class DataRefreshManager: ObservableObject {
         }
 
         let group = DispatchGroup()
-        var claudeResult: Result<UsageData, Error>?
         var codexResult: Result<CodexUsageData, Error>?
+        var claudeResultsByAccount: [UUID: Result<UsageData, Error>] = [:]
+        let claudeAccounts = settings.accounts.filter { $0.provider == .claude }
 
-        // Claude 请求
+        // Claude 请求：遍历所有 Claude 账户，按 0.4s 间隔错开发起，降低 Cloudflare/限流风险
         if fetchClaude {
-            group.enter()
-            apiService.fetchUsage { result in
-                claudeResult = result
-                group.leave()
+            for (index, account) in claudeAccounts.enumerated() {
+                group.enter()
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.4) { [weak self] in
+                    guard let self = self else {
+                        group.leave()
+                        return
+                    }
+                    self.claudeService(for: account).fetchUsage { result in
+                        claudeResultsByAccount[account.id] = result
+                        group.leave()
+                    }
+                }
             }
         }
 
@@ -234,45 +275,129 @@ class DataRefreshManager: ObservableObject {
                 self.clearCodexUsageState()
             }
 
-            // 处理 Claude 结果
+            // 处理 Claude 结果：逐账户合并，一个账户的错误不清除/隐藏其他账户的数据
             if fetchClaude {
-                switch claudeResult {
-                case .success(let data):
-                    let previousData = self.usageData
-                    self.usageData = data
-                    self.errorMessage = nil
-                    monitoringUtilizations[.claude] = data.percentage
-
-                    if self.settings.notificationsEnabled {
-                        NotificationManager.shared.checkAndNotify(usageData: data, previousData: previousData)
-                    }
-
-                    let newResetsAt = data.resetsAt
-                    let hasResetChanged = self.hasResetTimeChanged(from: self.lastResetsAt, to: newResetsAt)
-                    if hasResetChanged {
-                        self.cancelResetVerification()
-                    } else if let resetsAt = newResetsAt {
-                        self.scheduleResetVerification(resetsAt: resetsAt)
-                    }
-                    self.lastResetsAt = newResetsAt
-
-                case .failure(let error):
-                    self.errorMessage = error.localizedDescription
-                    Logger.menuBar.error("Claude API 请求失败: \(error.localizedDescription)")
-
-                case .none:
-                    break
+                for account in claudeAccounts {
+                    guard let result = claudeResultsByAccount[account.id] else { continue }
+                    self.mergeClaudeResult(account: account, result: result)
                 }
+
+                // 多账户收敛为一个值（取最坏情况）供智能刷新间隔使用；轮询间隔是全局的，无法按账户区分
+                if let maxUtilization = self.claudeUsageByAccount.values.map(\.percentage).max() {
+                    monitoringUtilizations[.claude] = maxUtilization
+                }
+
+                self.rebuildClaudeSnapshots()
+                self.assignFirstClaudeAccountState()
             }
 
             self.settings.updateSmartMonitoringMode(providerUtilizations: monitoringUtilizations)
         }
     }
 
+    /// 合并单个账户的 Claude 拉取结果：成功则更新数据并清错误；失败则仅标记错误，
+    /// 保留该账户上一次成功拉取的数据，使该行降级为"过期数据+错误"而非清空（错误隔离）
+    /// - Note: `NotificationManager.checkAndNotify` 目前仍通过 `currentAccountId` 内部解析账户 ID，
+    ///   可能与实际拉取的 `account` 不一致；TODO(phase-05) 将改为显式传入 `accountId:` 参数
+    private func mergeClaudeResult(account: Account, result: Result<UsageData, Error>) {
+        switch result {
+        case .success(let data):
+            let previousData = claudeUsageByAccount[account.id]
+            claudeUsageByAccount[account.id] = data
+            claudeErrorByAccount[account.id] = nil
+
+            if settings.notificationsEnabled {
+                // TODO(phase-05): 传入显式 accountId，替代 NotificationManager 内部的 currentAccountId 解析
+                NotificationManager.shared.checkAndNotify(usageData: data, previousData: previousData)
+            }
+
+            let newResetsAt = data.resetsAt
+            let hasResetChanged = hasResetTimeChanged(from: lastResetsAtByAccount[account.id], to: newResetsAt)
+            if hasResetChanged {
+                cancelResetVerification(accountId: account.id)
+            } else if let resetsAt = newResetsAt {
+                scheduleResetVerification(account: account, resetsAt: resetsAt)
+            }
+            if let newResetsAt {
+                lastResetsAtByAccount[account.id] = newResetsAt
+            } else {
+                lastResetsAtByAccount.removeValue(forKey: account.id)
+            }
+
+        case .failure(let error):
+            claudeErrorByAccount[account.id] = error.localizedDescription
+            Logger.menuBar.error("Claude API 请求失败 (\(account.displayName)): \(error.localizedDescription)")
+        }
+    }
+
+    /// 仅刷新单个 Claude 账户并合并结果；供重置验证定时器使用，避免像调用全量 `fetchUsage()`
+    /// 那样让 N 个账户 × 3 个验证定时器同时触发 N×3 次全量刷新，抵消 0.4s 错峰节流的限流缓解效果
+    /// - Parameter account: 目标账户；若该账户已从 `settings.accounts` 中移除则跳过
+    private func fetchClaudeAccount(_ account: Account) {
+        guard settings.accounts.contains(where: { $0.id == account.id && $0.provider == .claude }) else { return }
+
+        claudeService(for: account).fetchUsage { [weak self] result in
+            guard let self = self else { return }
+            self.mergeClaudeResult(account: account, result: result)
+
+            // 注意：此为重置验证专用的定向轮询（3 个定时器 × N 个账户，30 秒内可能多次触发），
+            // 不应调用 `updateSmartMonitoringMode`，否则会让 `unchangedCount` 被过快累加，
+            // 导致智能轮询在用户可能刚变为活跃时被过早降级为 idle。
+            self.rebuildClaudeSnapshots()
+            self.assignFirstClaudeAccountState()
+        }
+    }
+
+    /// 将 `settings.accounts` 中每个 Claude 账户的最新数据/错误映射为渲染用的快照，顺序与 `settings.accounts` 一致
+    private func rebuildClaudeSnapshots() {
+        claudeSnapshots = settings.accounts
+            .filter { $0.provider == .claude }
+            .map { account in
+                let data = claudeUsageByAccount[account.id]
+                return AccountUsageSnapshot(
+                    accountId: account.id,
+                    provider: .claude,
+                    displayName: account.displayName,
+                    color: account.color,
+                    fiveHour: Self.windowUsage(from: data?.fiveHour, windowSeconds: Self.claudeFiveHourWindowSeconds),
+                    sevenDay: Self.windowUsage(from: data?.sevenDay, windowSeconds: Self.claudeSevenDayWindowSeconds),
+                    errorMessage: claudeErrorByAccount[account.id]
+                )
+            }
+    }
+
+    /// 将 `UsageData.LimitData` 映射为 `WindowUsage`；Claude 的窗口时长是固定常量，直接写入而非留 nil
+    /// （与 Codex 不同：Codex 的窗口时长数据驱动，应继续从 `CodexUsageData.LimitData` 读取）
+    private static func windowUsage(from limit: UsageData.LimitData?, windowSeconds: TimeInterval) -> WindowUsage? {
+        guard let limit else { return nil }
+        return WindowUsage(percentage: limit.percentage, resetsAt: limit.resetsAt, windowSeconds: windowSeconds)
+    }
+
+    /// 将 `usageData`/`errorMessage`（向后兼容属性）赋值为 `settings.accounts` 中排在第一位的 Claude 账户的数据
+    /// 保持 `MenuBarManager`、`MenuBarIconRenderer`（phase 05 前）、`UsageDetailView`（phase 03 前）编译期不变
+    private func assignFirstClaudeAccountState() {
+        guard let firstClaudeAccount = settings.accounts.first(where: { $0.provider == .claude }) else {
+            usageData = nil
+            errorMessage = nil
+            return
+        }
+        usageData = claudeUsageByAccount[firstClaudeAccount.id]
+        errorMessage = claudeErrorByAccount[firstClaudeAccount.id]
+    }
+
     private func clearClaudeUsageState() {
         usageData = nil
-        lastResetsAt = nil
-        cancelResetVerification()
+        errorMessage = nil
+        claudeUsageByAccount.removeAll()
+        claudeErrorByAccount.removeAll()
+        claudeSnapshots.removeAll()
+        lastResetsAtByAccount.removeAll()
+        for service in claudeServices.values {
+            service.cancelAllRequests()
+        }
+        for accountId in claudeServices.keys {
+            cancelResetVerification(accountId: accountId)
+        }
     }
 
     private func clearCodexUsageState(clearError: Bool = true) {
@@ -497,45 +622,89 @@ class DataRefreshManager: ObservableObject {
         fetchCodexOnly()
     }
 
+    /// 仅刷新 Claude 数据：遍历所有 Claude 账户（同 `fetchUsage()` 的错开节奏），
+    /// 单个账户失败仅标记该账户错误，不影响其他账户已拉取的数据
     private func fetchClaudeOnly() {
         guard shouldFetchClaudeUsage else {
             clearClaudeUsageState()
             return
         }
+
+        let claudeAccounts = settings.accounts.filter { $0.provider == .claude }
+        guard !claudeAccounts.isEmpty else {
+            #if DEBUG
+            // 调试模式下即使未配置任何真实账户，也应继续展示模拟数据（与 fetchUsage() 中
+            // ClaudeAPIService.fetchUsage 的调试分支行为保持一致），而不是静默清空。
+            if settings.debugModeEnabled {
+                fetchClaudeDebugMockOnly()
+                return
+            }
+            #endif
+            clearClaudeUsageState()
+            // 必须走与正常完成路径相同的动画收尾，否则 refreshState.isRefreshing 会永久卡在 true
+            // （见 code review：该 early-return 之前遗漏了这一步）
+            endRefreshAnimationWithMinimumDuration { }
+            return
+        }
+
         isLoading = true
         errorMessage = nil
         lastAPIFetchTime = Date()
 
-        apiService.fetchUsage { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.isLoading = false
-                self.endRefreshAnimationWithMinimumDuration { }
-
-                switch result {
-                case .success(let data):
-                    let previousData = self.usageData
-                    self.usageData = data
-                    self.errorMessage = nil
-                    if self.settings.notificationsEnabled {
-                        NotificationManager.shared.checkAndNotify(usageData: data, previousData: previousData)
+        let group = DispatchGroup()
+        for (index, account) in claudeAccounts.enumerated() {
+            group.enter()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.4) { [weak self] in
+                guard let self = self else {
+                    group.leave()
+                    return
+                }
+                self.claudeService(for: account).fetchUsage { [weak self] result in
+                    guard let self = self else {
+                        group.leave()
+                        return
                     }
-                    self.settings.updateSmartMonitoringMode(providerUtilizations: [.claude: data.percentage])
-                    let newResetsAt = data.resetsAt
-                    if self.hasResetTimeChanged(from: self.lastResetsAt, to: newResetsAt) {
-                        self.cancelResetVerification()
-                    } else if let resetsAt = newResetsAt {
-                        self.scheduleResetVerification(resetsAt: resetsAt)
-                    }
-                    self.lastResetsAt = newResetsAt
-                case .failure(let error):
-                    self.clearClaudeUsageState()
-                    self.errorMessage = error.localizedDescription
-                    Logger.menuBar.error("Claude API 请求失败: \(error.localizedDescription)")
+                    self.mergeClaudeResult(account: account, result: result)
+                    group.leave()
                 }
             }
         }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { return }
+            self.isLoading = false
+            self.endRefreshAnimationWithMinimumDuration { }
+
+            if let maxUtilization = self.claudeUsageByAccount.values.map(\.percentage).max() {
+                self.settings.updateSmartMonitoringMode(providerUtilizations: [.claude: maxUtilization])
+            }
+
+            self.rebuildClaudeSnapshots()
+            self.assignFirstClaudeAccountState()
+        }
     }
+
+    #if DEBUG
+    /// 调试模式下、且当前未配置任何 Claude 账户时使用：直接产出模拟数据，
+    /// 保留旧版 `fetchClaudeOnly()`（改造前）在零账户场景下依然展示模拟数据的行为
+    private func fetchClaudeDebugMockOnly() {
+        isLoading = true
+        errorMessage = nil
+        lastAPIFetchTime = Date()
+
+        ClaudeAPIService().fetchUsage { [weak self] result in
+            guard let self = self else { return }
+            self.isLoading = false
+            self.endRefreshAnimationWithMinimumDuration { }
+
+            if case .success(let data) = result {
+                self.usageData = data
+                self.errorMessage = nil
+                self.settings.updateSmartMonitoringMode(providerUtilizations: [.claude: data.percentage])
+            }
+        }
+    }
+    #endif
 
     private func fetchCodexOnly() {
         guard shouldFetchCodexUsage else {
@@ -584,9 +753,11 @@ class DataRefreshManager: ObservableObject {
         switch provider {
         case .claude:
             errorMessage = nil
-            clearClaudeUsageState()
+            pruneClaudeAccountState()
             if shouldFetchClaudeUsage {
                 fetchClaudeOnly()
+            } else {
+                clearClaudeUsageState()
             }
 
         case .codex:
@@ -606,6 +777,24 @@ class DataRefreshManager: ObservableObject {
             NotificationManager.shared.resetAllNotificationStates()
             fetchUsage()
         }
+    }
+
+    /// 清理已不在 `settings.accounts` 中的 Claude 账户残留状态：取消其在途请求、
+    /// 释放其 `ClaudeAPIService` 实例、清空其用量/错误/重置验证状态，并重建 `claudeSnapshots`
+    private func pruneClaudeAccountState() {
+        let currentIds = Set(settings.accounts.filter { $0.provider == .claude }.map(\.id))
+        let staleIds = Set(claudeServices.keys).subtracting(currentIds)
+
+        for accountId in staleIds {
+            claudeServices[accountId]?.cancelAllRequests()
+            claudeServices.removeValue(forKey: accountId)
+            claudeUsageByAccount.removeValue(forKey: accountId)
+            claudeErrorByAccount.removeValue(forKey: accountId)
+            lastResetsAtByAccount.removeValue(forKey: accountId)
+            cancelResetVerification(accountId: accountId)
+        }
+
+        rebuildClaudeSnapshots()
     }
 
     /// Codex 来源（CLI / Browser）切换后立即重新拉取，不经过手动刷新防抖（见 plan.md D9 / Phase 04）
@@ -674,19 +863,23 @@ class DataRefreshManager: ObservableObject {
         return false
     }
 
-    /// 取消所有重置验证定时器
-    private func cancelResetVerification() {
-        timerManager.invalidate(TimerID.resetVerify1)
-        timerManager.invalidate(TimerID.resetVerify2)
-        timerManager.invalidate(TimerID.resetVerify3)
+    /// 取消指定账户的所有重置验证定时器
+    /// - Parameter accountId: 目标账户 ID；定时器 ID 按账户拼接，避免账户 B 的重置取消账户 A 的验证
+    private func cancelResetVerification(accountId: UUID) {
+        timerManager.invalidate(resetVerifyTimerId(TimerID.resetVerify1, accountId: accountId))
+        timerManager.invalidate(resetVerifyTimerId(TimerID.resetVerify2, accountId: accountId))
+        timerManager.invalidate(resetVerifyTimerId(TimerID.resetVerify3, accountId: accountId))
     }
 
-    /// 安排重置时间验证
+    /// 安排指定账户的重置时间验证
     /// 在重置时间过后的1秒、10秒、30秒分别触发一次刷新
-    /// - Parameter resetsAt: 用量重置时间
-    private func scheduleResetVerification(resetsAt: Date) {
-        // 清除旧的验证定时器
-        cancelResetVerification()
+    /// - Parameters:
+    ///   - account: 目标账户
+    ///   - resetsAt: 用量重置时间
+    private func scheduleResetVerification(account: Account, resetsAt: Date) {
+        let accountId = account.id
+        // 清除该账户旧的验证定时器
+        cancelResetVerification(accountId: accountId)
 
         // 计算距离重置时间的间隔
         let timeUntilReset = resetsAt.timeIntervalSinceNow
@@ -700,24 +893,24 @@ class DataRefreshManager: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         formatter.timeZone = TimeZone.current
-        Logger.menuBar.debug("安排重置验证 - 重置时间: \(formatter.string(from: resetsAt))")
+        Logger.menuBar.debug("安排重置验证 - 账户: \(accountId.uuidString) - 重置时间: \(formatter.string(from: resetsAt))")
 
-        // 重置后1秒验证
-        timerManager.schedule(TimerID.resetVerify1, interval: timeUntilReset + 1, repeats: false) { [weak self] in
-            Logger.menuBar.debug("重置验证 +1秒 - 开始刷新")
-            self?.fetchUsage()
+        // 重置后1秒验证：仅刷新该账户，避免多账户 × 多验证定时器同时触发全量刷新风暴
+        timerManager.schedule(resetVerifyTimerId(TimerID.resetVerify1, accountId: accountId), interval: timeUntilReset + 1, repeats: false) { [weak self] in
+            Logger.menuBar.debug("重置验证 +1秒 - 开始刷新账户 \(accountId.uuidString)")
+            self?.fetchClaudeAccount(account)
         }
 
         // 重置后10秒验证
-        timerManager.schedule(TimerID.resetVerify2, interval: timeUntilReset + 10, repeats: false) { [weak self] in
-            Logger.menuBar.debug("重置验证 +10秒 - 开始刷新")
-            self?.fetchUsage()
+        timerManager.schedule(resetVerifyTimerId(TimerID.resetVerify2, accountId: accountId), interval: timeUntilReset + 10, repeats: false) { [weak self] in
+            Logger.menuBar.debug("重置验证 +10秒 - 开始刷新账户 \(accountId.uuidString)")
+            self?.fetchClaudeAccount(account)
         }
 
         // 重置后30秒验证
-        timerManager.schedule(TimerID.resetVerify3, interval: timeUntilReset + 30, repeats: false) { [weak self] in
-            Logger.menuBar.debug("重置验证 +30秒 - 开始刷新")
-            self?.fetchUsage()
+        timerManager.schedule(resetVerifyTimerId(TimerID.resetVerify3, accountId: accountId), interval: timeUntilReset + 30, repeats: false) { [weak self] in
+            Logger.menuBar.debug("重置验证 +30秒 - 开始刷新账户 \(accountId.uuidString)")
+            self?.fetchClaudeAccount(account)
         }
     }
 
