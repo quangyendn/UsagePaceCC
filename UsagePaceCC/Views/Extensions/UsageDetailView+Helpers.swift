@@ -197,7 +197,8 @@ extension UsageDetailView {
                     usageData: usageData,
                     codexUsageData: codexUsageData
                 ),
-                isRefreshing: refreshState.isRefreshing
+                isRefreshing: refreshState.isRefreshing,
+                claudeSnapshots: claudeSnapshots
             )
             .frame(height: 114)
             .contentShape(Rectangle())
