@@ -85,10 +85,14 @@ struct LegendRowItem: Identifiable, Equatable {
 
 extension AccountUsageSnapshot {
     /// Codex 目前仍是单账户（phase 02 范围），但图表/图例要复用同一套账户驱动渲染路径，
-    /// 因此把它包成一个「只有 fiveHour 槽位」的 snapshot；secondary/extraUsage 仍走旧的
-    /// `usageData`/`codexUsageData` 驱动渲染路径，完全不受此包装影响。
+    /// 因此把它包成一个 snapshot；fiveHour 对应 primary 窗口，sevenDay 对应 secondary 窗口；
+    /// extraUsage 仍走旧的 `usageData`/`codexUsageData` 驱动渲染路径，完全不受此包装影响。
     static func codexWrapper(from data: CodexUsageData?, account: Account?) -> AccountUsageSnapshot? {
-        guard let primary = data?.primary else { return nil }
+        // Build the wrapper whenever EITHER window has data. Requiring `primary` alone used to
+        // drop `secondary`-only data entirely (or worse, draw a misleading 0% wedge via a
+        // fallback path) — matching how Claude's per-account snapshots already tolerate one
+        // window being nil.
+        guard data?.primary != nil || data?.secondary != nil else { return nil }
         // NOTE: The "can we know the elapsed ratio" plottability guard (resetsAt non-nil but
         // windowSeconds unknown/zero) intentionally lives at the CHART call site only
         // (`LinearUsageGraphView.drawAccountPoints`), not here. This wrapper is shared by both
@@ -97,17 +101,27 @@ extension AccountUsageSnapshot {
         // legend behavior — only the chart dot must be skipped when the x-position can't be
         // computed.
         let id = account?.id ?? codexFallbackAccountId
+        let primary = data?.primary
+        let secondary = data?.secondary
         return AccountUsageSnapshot(
             accountId: id,
             provider: .codex,
             displayName: account?.displayName ?? "Codex",
             color: account?.color ?? AccountColor.deterministicDefault(for: id),
-            fiveHour: WindowUsage(
-                percentage: primary.percentage,
-                resetsAt: primary.resetsAt,
-                windowSeconds: primary.windowSeconds
-            ),
-            sevenDay: nil,
+            fiveHour: primary.map {
+                WindowUsage(
+                    percentage: $0.percentage,
+                    resetsAt: $0.resetsAt,
+                    windowSeconds: $0.windowSeconds
+                )
+            },
+            sevenDay: secondary.map {
+                WindowUsage(
+                    percentage: $0.percentage,
+                    resetsAt: $0.resetsAt,
+                    windowSeconds: $0.windowSeconds
+                )
+            },
             errorMessage: nil
         )
     }

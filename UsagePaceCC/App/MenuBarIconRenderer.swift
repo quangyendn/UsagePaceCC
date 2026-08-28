@@ -139,7 +139,7 @@ class MenuBarIconRenderer {
 
         case .percentageOnly, .both:
             // Claude 部分：5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
-            var claudeIcons = createAccountGlyphIcons(from: claudeSnapshots, types: claudeTypes, button: button, isMonochrome: isMonochrome)
+            var claudeIcons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: claudeTypes.contains(.fiveHour), showSevenDay: claudeTypes.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
             let remainingClaudeTypes = claudeTypes.filter { $0 != .fiveHour && $0 != .sevenDay }
             claudeIcons.append(contentsOf: remainingClaudeTypes.compactMap { createIconForType($0, data: data, isMonochrome: isMonochrome, button: button) })
             if !claudeIcons.isEmpty {
@@ -203,30 +203,71 @@ class MenuBarIconRenderer {
     }
 
     /// 构建 Codex 指标图标列表
+    /// - Note: `.codexPrimary`/`.codexSecondary`（5h/7d 等效窗口）与 Claude 共用同一套账户组合
+    ///   图标机制（`createAccountGlyphIcons`，外圈进度环 + 内圈饼形扇区，账户颜色渲染）；
+    ///   `.codexExtraUsage` 是独立的六边形形状，不受此统一影响，仍走 `createCodexIcon`。
     private func buildCodexIcons(codex: CodexUsageData, types: [LimitType], isMonochrome: Bool, button: NSStatusBarButton?) -> [NSImage] {
         let showPlaceholder = settings.displayMode == .custom
-        return types.compactMap { type -> NSImage? in
-            switch type {
-            case .codexPrimary:
-                let percentage = codex.primary?.percentage ?? (showPlaceholder ? 0 : nil)
-                return percentage.flatMap { createCodexIcon(type: type, percentage: $0, isMonochrome: isMonochrome, button: button) }
-            case .codexSecondary:
-                let percentage = codex.secondary?.percentage ?? (showPlaceholder ? 0 : nil)
-                return percentage.flatMap { createCodexIcon(type: type, percentage: $0, isMonochrome: isMonochrome, button: button) }
-            case .codexExtraUsage:
-                let percentage: Double?
-                if let extra = codex.extraUsage, extra.enabled {
-                    percentage = extra.percentage
-                } else if showPlaceholder {
-                    percentage = 0
-                } else {
-                    percentage = nil
+
+        var icons: [NSImage] = []
+        let showPrimary = types.contains(.codexPrimary)
+        let showSecondary = types.contains(.codexSecondary)
+        if showPrimary || showSecondary {
+            let snapshots = codexGlyphSnapshots(from: codex)
+            icons.append(contentsOf: createAccountGlyphIcons(
+                from: snapshots,
+                showFiveHour: showPrimary,
+                showSevenDay: showSecondary,
+                button: button,
+                isMonochrome: isMonochrome
+            ))
+        }
+
+        if types.contains(.codexExtraUsage) {
+            let percentage: Double?
+            if let extra = codex.extraUsage, extra.enabled {
+                percentage = extra.percentage
+            } else if showPlaceholder {
+                percentage = 0
+            } else {
+                percentage = nil
+            }
+            if let percentage {
+                if let icon = createCodexIcon(type: .codexExtraUsage, percentage: percentage, isMonochrome: isMonochrome, button: button) {
+                    icons.append(icon)
                 }
-                return percentage.flatMap { createCodexIcon(type: type, percentage: $0, isMonochrome: isMonochrome, button: button) }
-            default:
-                return nil
             }
         }
+
+        return icons
+    }
+
+    /// 把当前 Codex 用量数据包装成账户组合图标所需的 snapshot 数组。
+    /// Codex 目前仍是单账户，但写成数组以便未来扩展为多账户时无需改动渲染路径；
+    /// `showPlaceholder`（自定义模式下账户尚无数据时）与旧的 `buildCodexIcons` 占位行为一致，
+    /// 通过在自定义模式下即使 `codexWrapper` 返回 nil（无 primary 数据）也兜底一个 0% snapshot 实现。
+    private func codexGlyphSnapshots(from codex: CodexUsageData) -> [AccountUsageSnapshot] {
+        let account = settings.currentCodexAccount
+        if let snapshot = AccountUsageSnapshot.codexWrapper(from: codex, account: account) {
+            return [snapshot]
+        }
+        guard settings.displayMode == .custom else { return [] }
+        let id = account?.id ?? Self.codexPlaceholderAccountId
+        return [AccountUsageSnapshot(
+            accountId: id,
+            provider: .codex,
+            displayName: account?.displayName ?? "Codex",
+            color: account?.color ?? AccountColor.deterministicDefault(for: id),
+            fiveHour: WindowUsage(percentage: 0, resetsAt: nil, windowSeconds: nil),
+            sevenDay: WindowUsage(percentage: 0, resetsAt: nil, windowSeconds: nil),
+            errorMessage: nil
+        )]
+    }
+
+    /// 没有已知 Codex 账户时的稳定占位 id（与 `AccountUsageSnapshot.codexFallbackAccountId` 同一常量，
+    /// 全 `C` 十六进制，恒定不变），用于自定义模式下的 0% 占位 snapshot。
+    private static var codexPlaceholderAccountId: UUID {
+        UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC") ?? UUID()
     }
 
     /// 创建 Provider 品牌图标（用于多 Provider 模式下的视觉分组）
@@ -250,7 +291,7 @@ class MenuBarIconRenderer {
         button: NSStatusBarButton?
     ) -> NSImage {
         // 5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
-        var icons = createAccountGlyphIcons(from: claudeSnapshots, types: types, button: button, isMonochrome: isMonochrome)
+        var icons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: types.contains(.fiveHour), showSevenDay: types.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
         let remainingTypes = types.filter { $0 != .fiveHour && $0 != .sevenDay }
         icons.append(contentsOf: remainingTypes.compactMap { type in
             createIconForType(type, data: data, isMonochrome: isMonochrome, button: button)
@@ -283,7 +324,7 @@ class MenuBarIconRenderer {
         }
 
         // 5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
-        var percentageIcons = createAccountGlyphIcons(from: claudeSnapshots, types: types, button: button, isMonochrome: isMonochrome)
+        var percentageIcons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: types.contains(.fiveHour), showSevenDay: types.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
         let remainingTypes = types.filter { $0 != .fiveHour && $0 != .sevenDay }
         percentageIcons.append(contentsOf: remainingTypes.compactMap { type in
             createIconForType(type, data: data, isMonochrome: isMonochrome, button: button)
@@ -583,14 +624,12 @@ class MenuBarIconRenderer {
     ///   但不再作为主要过滤手段。
     private func createAccountGlyphIcons(
         from snapshots: [AccountUsageSnapshot],
-        types: [LimitType],
+        showFiveHour: Bool,
+        showSevenDay: Bool,
         button: NSStatusBarButton?,
         isMonochrome: Bool
     ) -> [NSImage] {
         guard !snapshots.isEmpty else { return [] }
-
-        let showFiveHour = types.contains(.fiveHour)
-        let showSevenDay = types.contains(.sevenDay)
         guard showFiveHour || showSevenDay else { return [] }
 
         let usable = snapshots.filter { snapshot in
@@ -752,7 +791,10 @@ class MenuBarIconRenderer {
         }
     }
 
-    /// 根据 Codex 用量数据创建单个图标（Codex 专用，Phase 4 接入 UI）
+    /// 根据 Codex 用量数据创建单个图标（Codex 专用）
+    /// - Note: `.codexPrimary`/`.codexSecondary` 已迁移至 `createAccountGlyphIcons`（统一的
+    ///   环+饼形扇区账户组合图标，见 `buildCodexIcons`），此处只保留 `.codexExtraUsage` 的
+    ///   六边形渲染——那是一个独立的形状，与 5h/7d 等效窗口的环/扇区无关。
     func createCodexIcon(
         type: LimitType,
         percentage: Double,
@@ -762,20 +804,6 @@ class MenuBarIconRenderer {
         let removeBackground = settings.iconStyleMode == .colorTranslucent
 
         switch type {
-        case .codexPrimary:
-            if isMonochrome {
-                return createCircleTemplateImage(percentage: percentage, size: NSSize(width: 18, height: 18), button: button, removeBackground: true)
-            }
-            let color = UsageColorScheme.codexPrimaryColorAdaptive(percentage, for: button)
-            return createCircleImage(percentage: percentage, size: NSSize(width: 18, height: 18), colorOverride: color, button: button, removeBackground: removeBackground)
-
-        case .codexSecondary:
-            if isMonochrome {
-                return createCircleTemplateImage(percentage: percentage, size: NSSize(width: 18, height: 18), useSevenDayStyle: true, button: button, removeBackground: true)
-            }
-            let color = UsageColorScheme.codexSecondaryColorAdaptive(percentage, for: button)
-            return createCircleImage(percentage: percentage, size: NSSize(width: 18, height: 18), colorOverride: color, useDashedStyle: true, button: button, removeBackground: removeBackground)
-
         case .codexExtraUsage:
             let color = UsageColorScheme.codexExtraUsageColorAdaptive(percentage, for: button)
             return ShapeIconRenderer.createHexagonIcon(percentage: percentage, isMonochrome: isMonochrome, button: button, removeBackground: removeBackground, colorOverride: color)
