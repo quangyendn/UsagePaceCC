@@ -16,21 +16,30 @@ struct MiniProgressIcon: View {
     let color: Color
     let percentage: Double
     let size: CGFloat = 22
+    /// 7d 行使用填充样式（与图表 7d 点一致：彩色实心填充 + 细白边），数字改白色以保证可读性；
+    /// 5h 行保持原有描边样式（见 `LinearUsageGraphView.drawAccountDot` 的 `.filled`/`.outline` 区分）。
+    var filled: Bool = false
 
     var body: some View {
         Canvas { context, canvasSize in
-            let lineWidth: CGFloat = 2.2
             let rect = CGRect(origin: .zero, size: canvasSize)
             let fullPath = IconShapePaths.pathForLimitType(type, in: rect)
 
-            // 1. 形状边框（彩色）
-            context.stroke(fullPath, with: .color(color), lineWidth: lineWidth)
+            if filled {
+                // 1. 实心填充（彩色）+ 细白边，与图表 7d 点样式一致
+                context.fill(fullPath, with: .color(color))
+                context.stroke(fullPath, with: .color(.white.opacity(0.8)), lineWidth: 1)
+            } else {
+                // 1. 形状边框（彩色）
+                let lineWidth: CGFloat = 2.2
+                context.stroke(fullPath, with: .color(color), lineWidth: lineWidth)
+            }
 
-            // 2. 百分比数字（居中）
+            // 2. 百分比数字（居中）；填充样式下用白色数字保证可读性
             let fontSize = percentage >= 100 ? canvasSize.width * 0.28 : canvasSize.width * 0.38
             let text = Text("\(Int(percentage))")
                 .font(.system(size: fontSize, weight: .bold))
-                .foregroundColor(color)
+                .foregroundColor(filled ? .white : color)
             context.draw(text, at: CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2))
         }
         .frame(width: size, height: size)
@@ -72,7 +81,7 @@ struct UnifiedLimitRow: View {
             // 图标（含百分比数字和进度弧）；账户驱动行在接近限额时叠加红色警示环（code-review
             // fix 5），与图表点 `LinearUsageGraphView.drawAccountDot` 的红环叠加同一套视觉语言——
             // 账户色仍是主色，红环只是叠加的紧迫度信号，不是替换。
-            MiniProgressIcon(type: iconShapeType, color: swatchColor, percentage: percentageValue ?? 0)
+            MiniProgressIcon(type: iconShapeType, color: swatchColor, percentage: percentageValue ?? 0, filled: isSevenDayWindow)
                 .overlay(
                     Circle()
                         .stroke(Color.red, lineWidth: 1.5)
@@ -146,6 +155,12 @@ struct UnifiedLimitRow: View {
             return accountItem.window == .fiveHour ? .fiveHour : .sevenDay
         }
         return type ?? .fiveHour
+    }
+
+    /// Whether this row is a 7d window (account-driven rows only) — drives the filled swatch style
+    /// to match `LinearUsageGraphView.drawAccountDot`'s `.filled` (7d) vs `.outline` (5h) marker.
+    private var isSevenDayWindow: Bool {
+        accountItem?.window == .sevenDay
     }
 
     /// Whether this row's swatch should carry the near-limit warning ring (code-review fix 5).
