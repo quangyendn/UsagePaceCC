@@ -443,9 +443,17 @@ class UserSettings: ObservableObject {
         return codexAccounts.first { $0.id == id } ?? codexAccounts.first
     }
 
-    /// Codex Session Token（计算属性，指向当前 Codex 账户的 sessionKey 字段）
+    /// Codex Session Token（计算属性）
+    /// - Important: 优先取当前选中 Codex 账户的 sessionKey；但当前选中账户可能是 CLI 派生账户
+    ///   （`sessionKey` 恒为空字符串，见 `isCLIDerivedCodexAccount`），此时若列表里另有一个
+    ///   sessionKey 非空的 Browser 账户，必须回退到它，否则 `isBrowserSourceConfigured`
+    ///   （扫描整个列表）判定为「已配置」而实际取到的 token 却是空串，Browser 拉取必然失败。
+    ///   只有 1 个 Codex 账户时，回退分支不会改变行为（结果与直接读 `currentCodexAccount` 相同）。
     var codexSessionToken: String {
-        currentCodexAccount?.sessionKey ?? ""
+        if let currentToken = currentCodexAccount?.sessionKey, !currentToken.isEmpty {
+            return currentToken
+        }
+        return codexAccounts.first { !$0.sessionKey.isEmpty }?.sessionKey ?? ""
     }
 
     /// 是否同时存在 Claude 和 Codex 账户（决定 UI 进入 multi-provider 形态）
@@ -546,6 +554,43 @@ class UserSettings: ObservableObject {
     /// 探测到的 CLI 账户与用户当初同意的那个不一致，opt-in 已被自动撤回，等待用户重新确认。
     @Published private(set) var codexCLIAccountChanged: Bool = false
 
+    #if DEBUG
+    private static let codexCLIDismissedAccountKeysKey = "DEBUG_codexCLIDismissedAccountKeys"
+    #else
+    private static let codexCLIDismissedAccountKeysKey = "codexCLIDismissedAccountKeys"
+    #endif
+
+    /// 用户显式删除过的 CLI 派生账户的稳定 key（ChatGPT account id，trim + lowercased）集合，
+    /// 持久化到 UserDefaults。
+    /// - Important: `upsertCodexCLIAccount` 在每个探测周期都会重新运行；没有这份"黑名单"，
+    ///   用户删掉这一行之后，下一次探测又会把它当成全新账户复活。opt-out
+    ///   （`setCodexCLIEnabled(false)`）是另一回事——那是用户暂时不想用 CLI 来源，不是删除
+    ///   这个账户，因此不写入这个集合，重新 opt-in 后应该原样出现。
+    private var codexCLIDismissedAccountKeys: Set<String> = [] {
+        didSet {
+            defaults.set(Array(codexCLIDismissedAccountKeys), forKey: Self.codexCLIDismissedAccountKeysKey)
+        }
+    }
+
+    /// 把稳定字符串 key 折算成确定性 UUID，作为 CLI 派生账户的 `Account.id`。
+    /// - Important: 不能用 `UUID()`——那样每次探测周期重新创建账户都会得到新 id，
+    ///   丢失用户手动设置的颜色/别名，也会打乱 `NotificationManager` 按 id 记录的通知状态。
+    ///   取 SHA-256 摘要的前 16 字节作为 UUID 的原始字节，同一个 key 恒定映射到同一个 UUID。
+    private static func deterministicAccountId(for stableKey: String) -> UUID {
+        let digest = SHA256.hash(data: Data(stableKey.utf8))
+        let uuidBytes = Array(digest.prefix(16))
+        return uuidBytes.withUnsafeBufferPointer { buffer in
+            NSUUID(uuidBytes: buffer.baseAddress!) as UUID
+        }
+    }
+
+    /// 一个 Codex 账户是否是 CLI 探测流程落盘的（而非 Browser 登录添加的）。
+    /// - Important: 判定依据是 `sessionKey` 恒为空字符串——`upsertCodexCLIAccount` 从不写入
+    ///   真实 sessionKey，而 Browser 登录添加的账户必然携带非空 sessionKey。
+    private func isCLIDerivedCodexAccount(_ account: Account) -> Bool {
+        account.provider == .codex && account.sessionKey.isEmpty
+    }
+
     /// Codex Browser 侧的 ChatGPT account id —— D12 账户比对的关键字段
     /// - Note: 由 `CodexBrowserUsageSource` 在一次用量请求成功后解析 `accessToken` 的
     ///   `https://api.openai.com/auth` claim 并写入；解析失败或尚未成功请求过时保持 nil
@@ -566,7 +611,11 @@ class UserSettings: ObservableObject {
     var isCodexCLIOptInPending: Bool { codexCLIDetected && !codexCLIEnabled }
 
     /// Browser 来源是否已配置
-    var isBrowserSourceConfigured: Bool { !codexSessionToken.isEmpty }
+    /// - Important: 必须扫描完整的 `codexAccounts` 列表，不能用 `codexSessionToken`
+    ///   （= 当前选中账户的 sessionKey）判断——CLI 派生账户的 `sessionKey` 恒为空字符串，
+    ///   一旦用户当前选中的是 CLI 行，`codexSessionToken` 就会是空串，即便列表里另有一个
+    ///   sessionKey 非空的 Browser 账户，也会被误判为"未配置"。
+    var isBrowserSourceConfigured: Bool { codexAccounts.contains { !$0.sessionKey.isEmpty } }
 
     /// 当前生效的 Codex 来源；两个来源都未配置时为 nil
     /// - Note: 仅在"用户偏好的来源未配置、另一个来源已配置"时回退，这是可用性判断，不是失败时的静默切换
@@ -591,6 +640,60 @@ class UserSettings: ObservableObject {
         switch source {
         case .cli: return isCLISourceConfigured
         case .browser: return isBrowserSourceConfigured
+        }
+    }
+
+    /// 把已探测到且已 opt-in 同意的 Codex CLI 账户落盘为 `Account`，使其能像 Browser 账户一样携带
+    /// `AccountColor`。
+    /// - Important: 只在这里创建/更新；已存在的账户只刷新 `organizationName`，绝不覆盖 `.color`
+    ///   （用户手动选过的颜色必须跨探测周期保持不变）。`sessionKey` 恒为空字符串 ——
+    ///   `CodexCLIUsageSource.fetchUsage` 直接读取 `CodexCLIAuthReader` 的 bearer token，
+    ///   从不使用 `Account.sessionKey`。`id` 由稳定 key 确定性派生（见
+    ///   `deterministicAccountId(for:)`），使得删除后再次探测/重新 opt-in 时是幂等的，不会
+    ///   丢失颜色/别名，也不会打乱 `NotificationManager` 按 id 记录的状态。用户显式删除过的
+    ///   key 记录在 `codexCLIDismissedAccountKeys` 里，这里直接跳过，不再复活。
+    /// - Parameter postsChangeNotification: 是否在新增/更新账户后发送 `.accountChanged`。
+    ///   `setCodexCLIEnabled(true)` 的调用点会传 `false`，因为 `$codexCLIEnabled` 的订阅
+    ///   已经会触发一次刷新；两条路径都发通知会互相打断对方的请求，闪出一行
+    ///   `URLError.cancelled`（见该调用点注释）。
+    private func upsertCodexCLIAccount(postsChangeNotification: Bool = true) {
+        guard codexCLIEnabled, codexCLIDetected,
+              let chatgptAccountId = codexCLIChatGPTAccountId,
+              let consentedHash = codexCLIConsentedAccountHash,
+              Self.consentDigest(for: chatgptAccountId) == consentedHash else {
+            return
+        }
+
+        let stableId = chatgptAccountId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !stableId.isEmpty else { return }
+        guard !codexCLIDismissedAccountKeys.contains(stableId) else { return }
+        let label = codexCLIAccountLabel ?? stableId
+
+        if let index = codexAccounts.firstIndex(where: {
+            $0.organizationId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == stableId
+        }) {
+            if codexAccounts[index].organizationName != label {
+                codexAccounts[index].organizationName = label
+            }
+            return
+        }
+
+        let newAccount = Account(
+            id: Self.deterministicAccountId(for: stableId),
+            sessionKey: "",
+            organizationId: chatgptAccountId,
+            organizationName: label,
+            alias: nil,
+            createdAt: Date(),
+            provider: .codex
+        )
+        codexAccounts.append(newAccount)
+        if codexAccounts.count == 1 {
+            currentCodexAccountId = newAccount.id
+        }
+        Logger.settings.notice("已持久化 Codex CLI 账户: \(newAccount.displayName)")
+        if postsChangeNotification {
+            postAccountChanged(provider: .codex)
         }
     }
 
@@ -664,6 +767,8 @@ class UserSettings: ObservableObject {
 
         Logger.api.debug("Codex 当前生效来源: \(String(describing: self.effectiveCodexSource), privacy: .public)")
 
+        upsertCodexCLIAccount()
+
         // 未启用 CLI 之前，这次探测对外不产生任何可观察后果：不发通知、不改显示偏好。
         // 显示偏好的默认补齐只发生在显式 opt-in（`setCodexCLIEnabled(true)`）或新增 Browser 账户时。
         let changed = (wasConfigured != isCLISourceConfigured)
@@ -695,6 +800,20 @@ class UserSettings: ObservableObject {
             codexCLIConsentedAccountHash = codexCLIChatGPTAccountId.map { Self.consentDigest(for: $0) }
             codexCLIAccountChanged = false
             codexCLIEnabled = true
+            // 显式重新 opt-in 视为撤销此前的手动删除（见 `removeCodexAccount` 里对称的
+            // `.insert(stableId)`）：否则一旦用户删过这一行，即便完整走一遍 opt-out → opt-in，
+            // 这个账户也永远无法复活。只清这一个账户的 key，不清空整个黑名单集合。stableId
+            // 的推导方式必须与 `upsertCodexCLIAccount` 内部完全一致，否则清不掉。
+            if let chatgptAccountId = codexCLIChatGPTAccountId {
+                let stableId = chatgptAccountId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if !stableId.isEmpty {
+                    codexCLIDismissedAccountKeys.remove(stableId)
+                }
+            }
+            // `$codexCLIEnabled` 的订阅已经会触发一次刷新（见 MenuBarManager），这里落盘账户
+            // 不再重复发 `.accountChanged`，否则两条路径互相打断对方的请求，
+            // 闪出一行 `URLError.cancelled`（同上方 refreshCodexCLIState 的排序注释）。
+            upsertCodexCLIAccount(postsChangeNotification: false)
             if hasValidCodexCredentials {
                 ensureDefaultCodexDisplayTypesForCustomMode()
             }
@@ -702,9 +821,31 @@ class UserSettings: ObservableObject {
             codexCLIEnabled = false
             codexCLIConsentedAccountHash = nil
             codexCLIAccountChanged = false
+            // 真正的 opt-out，不是"用户删除了这一行"：对称地把 upsert 加进去的 CLI 派生账户
+            // 撤下来，否则它会永远留在 `codexAccounts` 里，`hasAnyCodexSource` 永远为 true，
+            // UI 卡在一个死掉的 Codex 区块上。不写入 `codexCLIDismissedAccountKeys`——
+            // 重新 opt-in 后应该原样出现。
+            removeCLIDerivedCodexAccountsWithoutDismissal()
         }
 
         Logger.settings.notice("Codex CLI 来源已\(enabled ? "启用" : "关闭", privacy: .public)")
+    }
+
+    /// 撤下所有 CLI 派生的 Codex 账户，但不把它们计入 `codexCLIDismissedAccountKeys`
+    /// （用于真正的 opt-out，见 `setCodexCLIEnabled(false)`；区别于用户手动删除，见 `removeCodexAccount`）。
+    private func removeCLIDerivedCodexAccountsWithoutDismissal() {
+        let cliAccounts = codexAccounts.filter { isCLIDerivedCodexAccount($0) }
+        guard !cliAccounts.isEmpty else { return }
+
+        for account in cliAccounts {
+            guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { continue }
+            let wasCurrent = (currentCodexAccountId == account.id)
+            codexAccounts.remove(at: index)
+            NotificationManager.shared.resetNotificationStates(for: .codex, accountId: account.id)
+            if wasCurrent {
+                currentCodexAccountId = codexAccounts.first?.id
+            }
+        }
     }
 
     /// 从 Browser 侧 accessToken 中解析 `chatgpt_account_id` claim 并发布（D12）
@@ -1127,6 +1268,11 @@ class UserSettings: ObservableObject {
         // 加载用户 opt-in 时同意的那个 ChatGPT 账户 id 的摘要（D12 同款比对字段）。
         // 只用于比对，永不进入 UI、日志或网络请求。
         self.codexCLIConsentedAccountHash = defaults.string(forKey: Self.codexCLIConsentedAccountHashKey)
+
+        // 加载用户显式删除过的 CLI 派生账户黑名单，防止探测周期把它们复活
+        self.codexCLIDismissedAccountKeys = Set(
+            defaults.stringArray(forKey: Self.codexCLIDismissedAccountKeysKey) ?? []
+        )
 
         // MARK: - 旧版迁移（v1.x → v2.0.0，保留向后兼容）
 
@@ -1613,8 +1759,17 @@ class UserSettings: ObservableObject {
     func removeCodexAccount(_ account: Account) {
         guard let index = codexAccounts.firstIndex(where: { $0.id == account.id }) else { return }
         let wasCurrent = (currentCodexAccountId == account.id)
+        let removedAccount = codexAccounts[index]
         codexAccounts.remove(at: index)
         NotificationManager.shared.resetNotificationStates(for: .codex, accountId: account.id)
+        // 用户显式删除的是 CLI 派生账户：记入黑名单，防止下一次探测周期把它当成新账户复活
+        // （opt-out 场景不走这条路径，见 `setCodexCLIEnabled(false)` 里的对称清理）。
+        if isCLIDerivedCodexAccount(removedAccount) {
+            let stableId = removedAccount.organizationId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !stableId.isEmpty {
+                codexCLIDismissedAccountKeys.insert(stableId)
+            }
+        }
         if wasCurrent {
             currentCodexAccountId = codexAccounts.first?.id
             postAccountChanged(provider: .codex)

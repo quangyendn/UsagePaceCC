@@ -446,6 +446,21 @@ enum L {
                 return localized("codex_limit_neutral")
             }
         }
+
+        /// Short-form counterpart to `codexWindowName(windowSeconds:)` (e.g. "5h"/"7d" instead of
+        /// "Codex 5-Hour Limit"), used by the compact account-item legend row (P06 fix 4) which
+        /// already carries the account name and a leading percentage, leaving no room for the long form.
+        static func codexWindowNameShort(windowSeconds: TimeInterval?) -> String {
+            guard let windowSeconds else { return localized("codex_limit_neutral_short") }
+            let minutes = windowSeconds / 60
+            if minutes == 300 {
+                return localized("codex_primary_limit_short")
+            } else if minutes == 10080 {
+                return localized("codex_secondary_limit_short")
+            } else {
+                return localized("codex_limit_neutral_short")
+            }
+        }
     }
 
     // MARK: - Display Options (v2.0.0)

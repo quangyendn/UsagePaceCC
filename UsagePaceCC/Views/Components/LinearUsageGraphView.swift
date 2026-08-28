@@ -39,7 +39,7 @@ struct LinearUsageGraphView: View {
     /// Legacy `LimitType`s still rendered via the old single-account `resolve(_:)` path (P03 scope
     /// correction): 5h/7d (Claude) and codexPrimary now render via the new account-driven path
     /// (`drawAccountPoints`) instead, to avoid double-drawing when exactly 1 account exists per provider.
-    private let legacyLimitTypes: Set<LimitType> = [.opusWeekly, .sonnetWeekly, .extraUsage, .codexSecondary, .codexExtraUsage]
+    private let legacyLimitTypes: Set<LimitType> = [.opusWeekly, .sonnetWeekly, .extraUsage, .codexExtraUsage]
 
     // MARK: - Constants
 
@@ -269,6 +269,30 @@ struct LinearUsageGraphView: View {
                 color: codexSnapshot.color.swiftUIColor,
                 accountId: codexSnapshot.accountId,
                 markerStyle: .outline,
+                // Codex must never guess a window length (code-review fix 3b): no fallback here.
+                // `AccountUsageSnapshot.codexWrapper` already guarantees `windowSeconds` is known
+                // whenever `resetsAt` is non-nil, so `calculateAccountElapsedRatio` never actually
+                // needs this fallback for a Codex point — but it stays nil to make that explicit
+                // rather than relying on `markerStyle` to infer provider.
+                fallbackWindowSeconds: nil
+            ))
+        }
+
+        if activeDisplayTypes.contains(.codexSecondary),
+           let codexSnapshot = AccountUsageSnapshot.codexWrapper(from: codexUsageData, account: UserSettings.shared.currentCodexAccount),
+           let secondary = codexSnapshot.sevenDay,
+           // Plottability guard (code-review fix, chart-only): when there's a reset time but no
+           // known window length, we cannot compute a meaningful x-position. Skip only the chart
+           // dot here — `codexWrapper` itself no longer applies this guard, so the legend row
+           // (`PopoverLayout.legendItems`) still renders unconditionally.
+           secondary.resetsAt == nil || (secondary.windowSeconds ?? 0) > 0 {
+            points.append(ResolvedPoint(
+                percentage: secondary.percentage,
+                resetsAt: secondary.resetsAt,
+                windowSeconds: secondary.windowSeconds,
+                color: codexSnapshot.color.swiftUIColor,
+                accountId: codexSnapshot.accountId,
+                markerStyle: .filled,
                 // Codex must never guess a window length (code-review fix 3b): no fallback here.
                 // `AccountUsageSnapshot.codexWrapper` already guarantees `windowSeconds` is known
                 // whenever `resetsAt` is non-nil, so `calculateAccountElapsedRatio` never actually

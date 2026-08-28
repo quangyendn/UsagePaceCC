@@ -80,26 +80,48 @@ struct UnifiedLimitRow: View {
                         .opacity(isNearLimit ? 1 : 0)
                 )
 
-            // 限制类型名称
-            Text(limitName)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
+            // 限制类型名称（账户驱动行：`{%}% {5字符名} {窗口}`，percent 已并入 limitName 前缀；
+            // 固定字号、不做 minimumScaleFactor 收缩——5 字符名截断 + 短窗口标签已经把总长度
+            // 控制在可预测范围内，legacy 行仍保留原有的自适应缩放）
+            if accountItem != nil {
+                Text(limitName)
+                    .font(.system(size: 12))
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            } else {
+                Text(limitName)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+            }
 
             Spacer(minLength: 8)
 
-            // 右侧：重置时间或剩余额度
-            Text(displayValue)
-                .font(.system(size: 12))
-                .fontWeight(.medium)
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
-                .id(showRemainingMode ? "remaining" : "reset")  // 强制识别为不同视图
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .move(edge: .bottom).combined(with: .opacity)
-                ))
+            // 右侧：重置时间或剩余额度（账户驱动行：仅 `· {date}`，百分比已并入 limitName）
+            if accountItem != nil {
+                Text(displayValue)
+                    .font(.system(size: 12))
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .id(showRemainingMode ? "remaining" : "reset")  // 强制识别为不同视图
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
+            } else {
+                Text(displayValue)
+                    .font(.system(size: 12))
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+                    .id(showRemainingMode ? "remaining" : "reset")  // 强制识别为不同视图
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
+            }
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 12)
@@ -145,15 +167,19 @@ struct UnifiedLimitRow: View {
 
     private var limitName: String {
         if let accountItem {
+            // percent-first, fixed 2-digit width（"5%"/"95%" 对齐一致，见 P06 fix 4）：
+            // `%2d` 对单数字百分比左侧补空格，不做零填充（零填充会把 "5%" 显示成 "05%"）。
+            let percentPrefix = percentageValue.map { String(format: "%2d%%", Int($0)) } ?? "-"
             let prefix = String(accountItem.snapshot.displayName.prefix(5))
             let windowLabel: String
             if accountItem.snapshot.provider == .codex {
-                // Codex 的窗口长度由 wire 决定，不能沿用 Claude 的 5h/7d 命名（见 plan.md Q4）。
-                windowLabel = L.LimitTypes.codexWindowName(windowSeconds: accountItem.windowUsage?.windowSeconds)
+                // Codex 的窗口长度由 wire 决定，不能沿用 Claude 的 5h/7d 命名（见 plan.md Q4）；
+                // 短格式版本，与 Claude 的 fiveHourLimitShort/sevenDayLimitShort 同样精简。
+                windowLabel = L.LimitTypes.codexWindowNameShort(windowSeconds: accountItem.windowUsage?.windowSeconds)
             } else {
-                windowLabel = accountItem.window == .fiveHour ? L.DetailRow.fiveHour : L.DetailRow.sevenDay
+                windowLabel = accountItem.window == .fiveHour ? L.Usage.fiveHourLimitShort : L.Usage.sevenDayLimitShort
             }
-            return "\(prefix) \(windowLabel)"
+            return "\(percentPrefix) \(prefix) \(windowLabel)"
         }
 
         switch type {
@@ -224,10 +250,10 @@ struct UnifiedLimitRow: View {
 
     private var displayValue: String {
         if let accountItem {
-            // 固定 `{percentage}% · {MM/dd HH:mm}` 格式（24h，locale 无关），不随 showRemainingMode 切换——
-            // 新格式没有「剩余额度」变体，spec §7 只定义了这一种呈现方式。
-            guard let usage = accountItem.windowUsage, let resetsAt = usage.resetsAt else { return "-" }
-            return "\(Int(usage.percentage))% · \(TimeFormatHelper.formatFixed(resetsAt))"
+            // 百分比已并入 `limitName` 前缀（P06 fix 4），这里只保留 `· {MM/dd HH:mm}`（24h，
+            // locale 无关），不随 showRemainingMode 切换——新格式没有「剩余额度」变体。
+            guard let resetsAt = accountItem.windowUsage?.resetsAt else { return "-" }
+            return "· \(TimeFormatHelper.formatFixed(resetsAt))"
         }
 
         switch type {

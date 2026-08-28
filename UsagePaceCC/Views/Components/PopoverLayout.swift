@@ -95,11 +95,11 @@ enum PopoverLayout {
     /// `accountId`/`markerStyle`) instead of the legacy single-account `usageData`/`codexUsageData`
     /// path.
     private static func isAccountDrivenType(_ type: LimitType) -> Bool {
-        type == .fiveHour || type == .sevenDay || type == .codexPrimary
+        type == .fiveHour || type == .sevenDay || type == .codexPrimary || type == .codexSecondary
     }
 
-    /// Legend types still rendered via the legacy path (opus/sonnet/extra/codexSecondary/
-    /// codexExtraUsage) — everything `legendTypes` would return minus the ones `legendItems` now covers.
+    /// Legend types still rendered via the legacy path (opus/sonnet/extra/codexExtraUsage) —
+    /// everything `legendTypes` would return minus the ones `legendItems` now covers.
     static func linearLegacyTypes(
         usageData: UsageData?,
         codexUsageData: CodexUsageData?,
@@ -113,20 +113,22 @@ enum PopoverLayout {
     }
 
     /// Single source of truth for the new account-driven legend rows (P03): 2 rows per saved Claude
-    /// account (5h, 7d — skipped per-window when that `WindowUsage?` is nil) plus 1 row for Codex's
-    /// wrapped single-account snapshot (primary window only). Shared by `UsageDetailView.legendSection`
-    /// and `rowCount` so the two never drift apart.
+    /// account (5h, 7d — skipped per-window when that `WindowUsage?` is nil) plus up to 2 rows for
+    /// Codex's wrapped single-account snapshot (primary/5h + secondary/7d, each bound and skipped
+    /// independently — a `nil` primary must never suppress a present secondary, and vice versa).
+    /// Shared by `UsageDetailView.legendSection` and `rowCount` so the two never drift apart.
     ///
     /// - Parameter activeDisplayTypes: user's custom-mode selection (code-review fix 2). A row is only
-    ///   emitted when its `LimitType` (`.fiveHour`/`.sevenDay`/`.codexPrimary`) is in this list — same
-    ///   rule the legacy path already applies via `legacyLimitTypes.contains` filtering. Defaults to
-    ///   `[.fiveHour, .sevenDay, .codexPrimary]` (i.e. no filtering) so existing/preview call sites that
-    ///   don't care about custom-mode selection keep compiling unchanged.
+    ///   emitted when its `LimitType` (`.fiveHour`/`.sevenDay`/`.codexPrimary`/`.codexSecondary`) is in
+    ///   this list — same rule the legacy path already applies via `legacyLimitTypes.contains`
+    ///   filtering. Defaults to `[.fiveHour, .sevenDay, .codexPrimary, .codexSecondary]` (i.e. no
+    ///   filtering) so existing/preview call sites that don't care about custom-mode selection keep
+    ///   compiling unchanged.
     static func legendItems(
         claudeSnapshots: [AccountUsageSnapshot],
         codexUsageData: CodexUsageData?,
         codexAccount: Account? = nil,
-        activeDisplayTypes: [LimitType] = [.fiveHour, .sevenDay, .codexPrimary]
+        activeDisplayTypes: [LimitType] = [.fiveHour, .sevenDay, .codexPrimary, .codexSecondary]
     ) -> [LegendRowItem] {
         var items: [LegendRowItem] = []
 
@@ -139,9 +141,13 @@ enum PopoverLayout {
             }
         }
 
-        if activeDisplayTypes.contains(.codexPrimary),
-           let codexSnapshot = AccountUsageSnapshot.codexWrapper(from: codexUsageData, account: codexAccount) {
-            items.append(LegendRowItem(accountId: codexSnapshot.accountId, snapshot: codexSnapshot, window: .fiveHour))
+        if let codexSnapshot = AccountUsageSnapshot.codexWrapper(from: codexUsageData, account: codexAccount) {
+            if activeDisplayTypes.contains(.codexPrimary), codexSnapshot.fiveHour != nil {
+                items.append(LegendRowItem(accountId: codexSnapshot.accountId, snapshot: codexSnapshot, window: .fiveHour))
+            }
+            if activeDisplayTypes.contains(.codexSecondary), codexSnapshot.sevenDay != nil {
+                items.append(LegendRowItem(accountId: codexSnapshot.accountId, snapshot: codexSnapshot, window: .sevenDay))
+            }
         }
 
         return items
