@@ -104,6 +104,7 @@ struct UnifiedLimitRow: View {
                 Text(displayValue)
                     .font(.system(size: 12))
                     .fontWeight(.medium)
+                    .monospacedDigit()
                     .lineLimit(1)
                     .id(showRemainingMode ? "remaining" : "reset")  // 强制识别为不同视图
                     .transition(.asymmetric(
@@ -125,7 +126,7 @@ struct UnifiedLimitRow: View {
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 12)
-        .background(Color.gray.opacity(0.1))
+        .background(Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a").opacity(0.4))
         .cornerRadius(8)
     }
 
