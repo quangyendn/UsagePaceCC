@@ -109,7 +109,7 @@ struct LinearUsageGraphView: View {
             } else {
                 // Loading or no data state
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 2)
+                    .stroke(Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a"), lineWidth: 2)
                     .frame(width: graphWidth - padding * 2, height: graphHeight - padding * 2)
 
                 if isRefreshing {
@@ -129,7 +129,7 @@ struct LinearUsageGraphView: View {
 
     /// Draw subtle horizontal grid lines at 25%, 50%, 75%, 100%
     private func drawGrid(context: GraphicsContext, in rect: CGRect) {
-        let gridColor = Color.gray.opacity(0.15)
+        let gridColor = Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a")
 
         for percentage in stride(from: 25.0, through: 100.0, by: 25.0) {
             let y = rect.maxY - (CGFloat(percentage) / 100.0 * rect.height)
@@ -155,7 +155,7 @@ struct LinearUsageGraphView: View {
         // Draw border
         var borderPath = Path()
         borderPath.addRect(rect)
-        context.stroke(borderPath, with: .color(Color.gray.opacity(0.3)), lineWidth: gridLineWidth)
+        context.stroke(borderPath, with: .color(Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a")), lineWidth: gridLineWidth)
     }
 
     /// Draw dashed diagonal line representing ideal pace (0,0) to (1,100)

@@ -499,14 +499,6 @@ class MenuBarIconRenderer {
         path.fill()
     }
 
-    /// 在外观（浅色/深色菜单栏）间应用亮度自适应：仅提取 `NSColor.adjustedForDarkMode()`
-    /// 这部分与百分比无关的亮度变换逻辑复用，而非百分比驱动的颜色选择（`UsageColorScheme.*ColorAdaptive`），
-    /// 使其可以作用于任意账户自定义颜色（`Account.color`），不仅限于原有的危险色阶。
-    private func appearanceAdaptiveColor(_ base: NSColor, appearance: NSAppearance) -> NSColor {
-        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return isDark ? base.adjustedForDarkMode() : base
-    }
-
     /// 账户紧迫度评分：取 5 小时/7 天两个窗口中百分比较高者（而非仅优先 5h），
     /// 与 phase-03 图表对每个窗口独立应用 `isNearLimit` 保持一致——5h 低但 7d 接近上限的账户
     /// 同样应触发红色警示叠加层。仅统计用户当前实际勾选展示的窗口（`showFiveHour`/`showSevenDay`），
@@ -556,7 +548,11 @@ class MenuBarIconRenderer {
     /// - Parameters:
     ///   - snapshot: 账户用量快照
     ///   - isNearLimit: 是否已临近上限（决定是否叠加警示描边）
-    ///   - appearance: 状态栏按钮的外观，用于亮度自适应
+    ///   - appearance: 状态栏按钮的外观；通过 `performAsCurrentDrawingAppearance` 将其设为当前
+    ///     绘制外观，使 `NSColor` 动态颜色（如 `AccountColor.swiftUIColor` 转换而来的 `NSColor`）
+    ///     在 `lockFocus`/`unlockFocus` 离屏绘制期间按正确的浅色/深色变体解析——`NSImage.lockFocus()`
+    ///     本身并不会随菜单栏实际外观切换当前绘制外观（默认/沿用上一次设置，通常为 Aqua 浅色），
+    ///     若不显式设置，深色菜单栏下会错误解析出浅色变体的颜色（对比度不足，近乎不可见）。
     ///   - showFiveHour: 用户是否勾选展示 5h 窗口
     ///   - showSevenDay: 用户是否勾选展示 7d 窗口
     ///   - isMonochrome: 是否为单色模式
@@ -580,33 +576,42 @@ class MenuBarIconRenderer {
         let image = NSImage(size: size)
         image.lockFocus()
 
-        let rect = NSRect(origin: .zero, size: size)
-        let center = NSPoint(x: rect.midX, y: rect.midY)
-        let color: NSColor
-        if isMonochrome {
-            color = NSColor.labelColor
-        } else {
-            color = appearanceAdaptiveColor(NSColor(snapshot.color.swiftUIColor), appearance: appearance)
-        }
-        let trackColor = isMonochrome ? NSColor.labelColor.withAlphaComponent(0.25) : NSColor.gray.withAlphaComponent(0.5)
+        // NSImage.lockFocus() 不会随菜单栏实际外观切换当前绘制外观（默认/沿用上一次设置，
+        // 通常为 Aqua 浅色）；显式调用 performAsCurrentDrawingAppearance 使下方绘制体内解析的
+        // NSColor 动态颜色（如账户自定义颜色）按 appearance 参数（状态栏按钮的真实外观）
+        // 正确选取浅色/深色变体，而非始终落到浅色变体。
+        appearance.performAsCurrentDrawingAppearance {
+            let rect = NSRect(origin: .zero, size: size)
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            let color: NSColor
+            if isMonochrome {
+                color = NSColor.labelColor
+            } else {
+                // AccountColor.swiftUIColor 已按浅色/深色分别调好色值，不再叠加
+                // appearanceAdaptiveColor 的额外提亮，否则与弹出窗口图例/图表中
+                // 直接使用同一 dark hex 的颜色产生可见色差。
+                color = NSColor(snapshot.color.swiftUIColor)
+            }
+            let trackColor = isMonochrome ? NSColor.labelColor.withAlphaComponent(0.25) : NSColor.gray.withAlphaComponent(0.5)
 
-        if let fiveHour = fiveHour {
-            let outerRadius = min(rect.width, rect.height) / 2 - 2
-            drawTrackCircle(center: center, radius: outerRadius, color: trackColor, dashed: useDashedTrack)
-            drawProgressRing(in: rect, percentage: fiveHour.percentage, color: color, lineWidth: 2.5)
-        }
+            if let fiveHour = fiveHour {
+                let outerRadius = min(rect.width, rect.height) / 2 - 2
+                drawTrackCircle(center: center, radius: outerRadius, color: trackColor, dashed: useDashedTrack)
+                drawProgressRing(in: rect, percentage: fiveHour.percentage, color: color, lineWidth: 2.5)
+            }
 
-        if let sevenDay = sevenDay {
-            // 半径小于外圈进度环（外圈半径 = size/2 - 2），留出可视间隙
-            let wedgeInset: CGFloat = 5.5
-            let wedgeRect = rect.insetBy(dx: wedgeInset, dy: wedgeInset)
-            let wedgeRadius = min(wedgeRect.width, wedgeRect.height) / 2
-            drawTrackCircle(center: center, radius: wedgeRadius, color: trackColor, dashed: useDashedTrack)
-            drawPieWedge(in: wedgeRect, percentage: sevenDay.percentage, color: color)
-        }
+            if let sevenDay = sevenDay {
+                // 半径小于外圈进度环（外圈半径 = size/2 - 2），留出可视间隙
+                let wedgeInset: CGFloat = 5.5
+                let wedgeRect = rect.insetBy(dx: wedgeInset, dy: wedgeInset)
+                let wedgeRadius = min(wedgeRect.width, wedgeRect.height) / 2
+                drawTrackCircle(center: center, radius: wedgeRadius, color: trackColor, dashed: useDashedTrack)
+                drawPieWedge(in: wedgeRect, percentage: sevenDay.percentage, color: color)
+            }
 
-        if isNearLimit {
-            drawNearLimitOverlay(in: rect)
+            if isNearLimit {
+                drawNearLimitOverlay(in: rect)
+            }
         }
 
         image.unlockFocus()
