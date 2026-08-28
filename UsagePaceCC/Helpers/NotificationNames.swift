@@ -30,6 +30,10 @@ extension Notification.Name {
     /// 当用户切换账户时发送，触发数据刷新
     static let accountChanged = Notification.Name("accountChanged")
 
+    /// 账户颜色已更改通知
+    /// 当用户修改账户颜色时发送，仅需从已缓存数据重建快照，无需重新发起网络请求
+    static let accountColorChanged = Notification.Name("accountColorChanged")
+
     // MARK: - Window Related
 
     /// 打开设置窗口通知

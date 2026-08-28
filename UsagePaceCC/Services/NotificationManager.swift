@@ -54,10 +54,16 @@ class NotificationManager {
     /// - Parameters:
     ///   - usageData: 最新的用量数据
     ///   - previousData: 上一次的用量数据（用于对比变化）
-    func checkAndNotify(usageData: UsageData, previousData: UsageData?) {
+    ///   - accountId: 该用量数据所属的账户 id（P05：由调用方显式传入，
+    ///     不再由本类内部通过 `currentAccountId` 解析，避免后台账户被错误归因到当前选中账户）
+    ///   - accountDisplayName: 该账户的人类可读展示名（P05：用于在多账户场景下让通知文案
+    ///     区分不同账户，而不是让所有账户共用一段无法辨别来源的文案）
+    func checkAndNotify(usageData: UsageData, previousData: UsageData?, accountId: UUID, accountDisplayName: String) {
         // 逐个限制类型检查
         checkLimit(
             type: .fiveHour,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: usageData.fiveHour?.percentage,
             previous: previousData?.fiveHour?.percentage,
             currentResetsAt: usageData.fiveHour?.resetsAt,
@@ -65,6 +71,8 @@ class NotificationManager {
         )
         checkLimit(
             type: .sevenDay,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: usageData.sevenDay?.percentage,
             previous: previousData?.sevenDay?.percentage,
             currentResetsAt: usageData.sevenDay?.resetsAt,
@@ -72,6 +80,8 @@ class NotificationManager {
         )
         checkLimit(
             type: .opusWeekly,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: usageData.opus?.percentage,
             previous: previousData?.opus?.percentage,
             currentResetsAt: usageData.opus?.resetsAt,
@@ -79,6 +89,8 @@ class NotificationManager {
         )
         checkLimit(
             type: .sonnetWeekly,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: usageData.sonnet?.percentage,
             previous: previousData?.sonnet?.percentage,
             currentResetsAt: usageData.sonnet?.resetsAt,
@@ -88,6 +100,8 @@ class NotificationManager {
         // Extra Usage 单独处理
         checkLimit(
             type: .extraUsage,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: usageData.extraUsage?.percentage,
             previous: previousData?.extraUsage?.percentage,
             currentResetsAt: nil,
@@ -99,9 +113,16 @@ class NotificationManager {
     /// - Parameters:
     ///   - codexUsageData: 最新的 Codex 用量数据
     ///   - previousData: 上一次的 Codex 用量数据（用于对比变化）
+    /// - Note: Codex 目前仍是单账户（无按账户区分的调用方），继续沿用
+    ///   `currentCodexAccountId` 内部解析；一旦有多账户 Codex 调用方，应改为与
+    ///   `checkAndNotify(usageData:previousData:accountId:)` 一致的显式传参。
     func checkAndNotify(codexUsageData: CodexUsageData, previousData: CodexUsageData?) {
+        let accountId = UserSettings.shared.currentCodexAccountId
+        let accountDisplayName = UserSettings.shared.currentCodexAccount?.displayName ?? "Codex"
         checkLimit(
             type: .codexPrimary,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: codexUsageData.primary?.percentage,
             previous: previousData?.primary?.percentage,
             currentResetsAt: codexUsageData.primary?.resetsAt,
@@ -109,6 +130,8 @@ class NotificationManager {
         )
         checkLimit(
             type: .codexSecondary,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: codexUsageData.secondary?.percentage,
             previous: previousData?.secondary?.percentage,
             currentResetsAt: codexUsageData.secondary?.resetsAt,
@@ -116,6 +139,8 @@ class NotificationManager {
         )
         checkLimit(
             type: .codexExtraUsage,
+            accountId: accountId,
+            accountDisplayName: accountDisplayName,
             current: codexUsageData.extraUsage?.percentage,
             previous: previousData?.extraUsage?.percentage,
             currentResetsAt: nil,
@@ -126,8 +151,12 @@ class NotificationManager {
     // MARK: - Private Methods
 
     /// 检查单个限制类型的用量变化
+    /// - Parameter accountId: 该次检查所属的账户 id（P05：由 `checkAndNotify` 显式传入，
+    ///   用于构建按账户区分的通知 key，替代内部隐式解析 `currentAccountId`）
     private func checkLimit(
         type: LimitType,
+        accountId: UUID?,
+        accountDisplayName: String,
         current: Double?,
         previous: Double?,
         currentResetsAt: Date?,
@@ -142,9 +171,9 @@ class NotificationManager {
             currentResetsAt: currentResetsAt,
             previousResetsAt: previousResetsAt
         ) {
-            sendResetNotification(limitType: type)
-            notifiedWarnings.removeValue(forKey: notificationKey(for: type))
-            notifiedWarnings.removeValue(forKey: notificationKey(for: type, suffix: "75"))
+            sendResetNotification(limitType: type, accountDisplayName: accountDisplayName)
+            notifiedWarnings.removeValue(forKey: notificationKey(for: type, accountId: accountId))
+            notifiedWarnings.removeValue(forKey: notificationKey(for: type, accountId: accountId, suffix: "75"))
             return
         }
 
@@ -152,31 +181,24 @@ class NotificationManager {
 
         // 7天限制额外检查 75% 阈值
         if type == .sevenDay || type == .codexSecondary {
-            let earlyKey = notificationKey(for: type, suffix: "75")
+            let earlyKey = notificationKey(for: type, accountId: accountId, suffix: "75")
             let alreadyNotifiedEarly = notifiedWarnings[earlyKey] ?? false
             if !alreadyNotifiedEarly && previousPct < sevenDayEarlyWarningThreshold && currentPct >= sevenDayEarlyWarningThreshold {
-                sendUsageWarning(limitType: type, percentage: currentPct)
+                sendUsageWarning(limitType: type, percentage: currentPct, accountDisplayName: accountDisplayName)
                 notifiedWarnings[earlyKey] = true
             }
         }
 
         // 检测是否跨越 90% 阈值
-        let warningKey = notificationKey(for: type)
+        let warningKey = notificationKey(for: type, accountId: accountId)
         let alreadyNotified = notifiedWarnings[warningKey] ?? false
         if !alreadyNotified && previousPct < warningThreshold && currentPct >= warningThreshold {
-            sendUsageWarning(limitType: type, percentage: currentPct)
+            sendUsageWarning(limitType: type, percentage: currentPct, accountDisplayName: accountDisplayName)
             notifiedWarnings[warningKey] = true
         }
     }
 
-    private func notificationKey(for type: LimitType, suffix: String? = nil) -> String {
-        let accountId: UUID?
-        switch type.provider {
-        case .claude:
-            accountId = UserSettings.shared.currentAccountId
-        case .codex:
-            accountId = UserSettings.shared.currentCodexAccountId
-        }
+    private func notificationKey(for type: LimitType, accountId: UUID?, suffix: String? = nil) -> String {
         return Self.makeNotificationKey(
             provider: type.provider,
             accountId: accountId,
@@ -228,10 +250,10 @@ class NotificationManager {
     }
 
     /// 发送用量警告通知
-    private func sendUsageWarning(limitType: LimitType, percentage: Double) {
+    private func sendUsageWarning(limitType: LimitType, percentage: Double, accountDisplayName: String) {
         let content = UNMutableNotificationContent()
         content.title = L.UsageNotification.warningTitle
-        content.body = L.UsageNotification.warningBody(limitType.displayName, Int(percentage))
+        content.body = L.UsageNotification.warningBody(accountName: accountDisplayName, type: limitType.displayName, percentage: Int(percentage))
         content.sound = .default
 
         let request = UNNotificationRequest(
@@ -250,10 +272,10 @@ class NotificationManager {
     }
 
     /// 发送用量重置通知
-    private func sendResetNotification(limitType: LimitType) {
+    private func sendResetNotification(limitType: LimitType, accountDisplayName: String) {
         let content = UNMutableNotificationContent()
         content.title = L.UsageNotification.resetTitle
-        content.body = L.UsageNotification.resetBody(limitType.displayName)
+        content.body = L.UsageNotification.resetBody(accountName: accountDisplayName, type: limitType.displayName)
         content.sound = .default
 
         let request = UNNotificationRequest(

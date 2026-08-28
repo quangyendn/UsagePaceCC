@@ -35,8 +35,6 @@
 "usage.refresh_cooldown" = "Please wait a moment";
 "usage.run_diagnostic" = "Run Diagnostic";
 "usage.codex_title" = "Codex Usage";
-"usage.codex_circular_unsupported" = "Codex usage is shown in Linear graph mode.";
-"usage.switch_to_linear" = "Switch to Linear";
 
 // MARK: - Settings - Tabs
 "settings.tab.general" = "General";
@@ -285,6 +283,9 @@
 "codex_secondary_limit" = "Codex 7-Day Limit";
 "codex_extra_usage" = "Codex Extra Usage";
 "codex_limit_neutral" = "Codex Limit";
+"codex_primary_limit_short" = "5h";
+"codex_secondary_limit_short" = "7d";
+"codex_limit_neutral_short" = "Codex";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5-Hour Limit";
@@ -388,12 +389,6 @@
 "extra_usage.detail_credits_balance" = "%d credits";
 "extra_usage.detail_credits_remaining" = "%d credits remaining";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "Rainbow Gradient";
-"loading_animation.dashed" = "Dashed Rotation";
-"loading_animation.pulse" = "Pulse Effect";
-"loading_animation.current" = "Loading Animation: %@";
-
 // MARK: - Time Format
 "time_format.system" = "Follow System";
 "time_format.twelve_hour" = "12-Hour (2:30 PM)";
@@ -436,8 +431,10 @@
 "notification.description" = "Receive a notification when any limit reaches 90%%, or when usage resets.";
 "notification.warning_title" = "Usage Warning";
 "notification.warning_body" = "%@ has reached %d%% usage";
+"notification.warning_body_with_account" = "%@ · %@ has reached %d%% usage";
 "notification.reset_title" = "Usage Reset";
 "notification.reset_body" = "%@ usage has been reset";
+"notification.reset_body_with_account" = "%@ · %@ usage has been reset";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "Sign in to Claude";
@@ -460,12 +457,3 @@
 "account.add_codex_account" = "Add Codex Account";
 "account.codex_current_account" = "Current Codex Account";
 
-// MARK: - Graph Type
-"graph_type.circular" = "Circular";
-"graph_type.linear" = "Linear";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "Graph Style";
-"graph_style.hint" = "Choose how usage is visualized";
-"graph_style.circular_description" = "Shows usage as a percentage ring";
-"graph_style.linear_description" = "Shows usage timeline with pace prediction";

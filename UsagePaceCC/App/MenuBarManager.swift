@@ -70,6 +70,10 @@ class MenuBarManager: ObservableObject {
     @Published var hasAvailableUpdate = false
     /// 最新版本号（从 dataManager 同步）
     @Published var latestVersion: String?
+    /// 所有已保存的 Claude 账户快照（从 dataManager 同步，P03 code-review fix 1）：
+    /// 与 usageData/codexUsageData/errorMessage 走同一套 Combine 同步 + Binding 机制，
+    /// 保证 popover 打开后异步刷新落地时这份数据也能跟着更新，而不是构造时的一次性快照。
+    @Published var claudeSnapshots: [AccountUsageSnapshot] = []
     /// 用户已确认的版本号（点击检查更新后记录）
     private var acknowledgedVersion: String?
 
@@ -127,6 +131,9 @@ class MenuBarManager: ObservableObject {
 
         dataManager.$latestVersion
             .assign(to: &$latestVersion)
+
+        dataManager.$claudeSnapshots
+            .assign(to: &$claudeSnapshots)
     }
     
     /// 处理菜单栏图标点击事件
@@ -259,6 +266,16 @@ class MenuBarManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // 监听账户颜色变更通知：仅需从已缓存数据重建快照并重绘，无需重新发起网络请求
+        NotificationCenter.default.publisher(for: .accountColorChanged)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.ui.clearIconCache()
+                self.dataManager.handleAccountColorChanged()
+                self.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+
         // 监听 Codex 来源（CLI / Browser）切换，立即用新来源重新拉取，而不是等待下一个刷新周期（见 plan.md D9）
         settings.$codexSource
             .dropFirst()
@@ -342,6 +359,10 @@ class MenuBarManager: ObservableObject {
             shouldShowUpdateBadge: Binding(
                 get: { self.shouldShowUpdateBadge },
                 set: { _ in }
+            ),
+            claudeSnapshots: Binding(
+                get: { self.claudeSnapshots },
+                set: { self.claudeSnapshots = $0 }
             )
         ))
 
@@ -357,7 +378,8 @@ class MenuBarManager: ObservableObject {
             usageData: usageData,
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
-            graphDisplayType: settings.graphDisplayType
+            claudeSnapshots: dataManager.claudeSnapshots,
+            codexAccount: settings.currentCodexAccount
         )
         return NSSize(width: PopoverLayout.width, height: PopoverLayout.height(rowCount: rowCount))
     }
@@ -542,7 +564,7 @@ class MenuBarManager: ObservableObject {
 
     /// 更新菜单栏图标
     private func updateMenuBarIcon() {
-        ui.updateMenuBarIcon(usageData: usageData, codexUsageData: codexUsageData, hasUpdate: hasAvailableUpdate, shouldShowBadge: shouldShowUpdateBadge)
+        ui.updateMenuBarIcon(usageData: usageData, codexUsageData: codexUsageData, claudeSnapshots: claudeSnapshots, hasUpdate: hasAvailableUpdate, shouldShowBadge: shouldShowUpdateBadge)
     }
     
     // MARK: - Cleanup

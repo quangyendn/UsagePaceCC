@@ -18,18 +18,28 @@ struct LinearUsageGraphView: View {
     let codexUsageData: CodexUsageData?
     let activeDisplayTypes: [LimitType]
     let isRefreshing: Bool
+    /// All saved Claude accounts (P03). Drives the new per-account 5h/7d chart points; empty array
+    /// keeps existing/preview call sites compiling unchanged (no account-driven points drawn).
+    let claudeSnapshots: [AccountUsageSnapshot]
 
     init(
         usageData: UsageData?,
         codexUsageData: CodexUsageData? = nil,
         activeDisplayTypes: [LimitType],
-        isRefreshing: Bool
+        isRefreshing: Bool,
+        claudeSnapshots: [AccountUsageSnapshot] = []
     ) {
         self.usageData = usageData
         self.codexUsageData = codexUsageData
         self.activeDisplayTypes = activeDisplayTypes
         self.isRefreshing = isRefreshing
+        self.claudeSnapshots = claudeSnapshots
     }
+
+    /// Legacy `LimitType`s still rendered via the old single-account `resolve(_:)` path (P03 scope
+    /// correction): 5h/7d (Claude) and codexPrimary now render via the new account-driven path
+    /// (`drawAccountPoints`) instead, to avoid double-drawing when exactly 1 account exists per provider.
+    private let legacyLimitTypes: Set<LimitType> = [.opusWeekly, .sonnetWeekly, .extraUsage, .codexExtraUsage]
 
     // MARK: - Constants
 
@@ -43,6 +53,15 @@ struct LinearUsageGraphView: View {
     /// One resolved point, provider-agnostic. Both Claude (`usageData`) and Codex (`codexUsageData`)
     /// funnel through `resolve(_:)` into this shape so drawing code never branches on provider again.
     private struct ResolvedPoint {
+        /// How the dot is drawn (P03). `.legacy` preserves today's filled-dot-with-white-border look
+        /// (still used by `legacyLimitTypes`); `.outline`/`.filled` are the new account-driven markers
+        /// (5h = outline ring, 7d = filled ring), both colored from `AccountColor` rather than percentage.
+        enum MarkerStyle {
+            case legacy
+            case outline
+            case filled
+        }
+
         let percentage: Double
         let resetsAt: Date?
         /// Window length in seconds, when known. Claude points leave this nil (their window length is
@@ -51,6 +70,16 @@ struct LinearUsageGraphView: View {
         /// windows are not reliably 5h/7d — this account's measured primary window is 604800s (7 days).
         let windowSeconds: TimeInterval?
         let color: Color
+        /// nil for `legacyLimitTypes` points (no per-account identity, unchanged from before P03).
+        let accountId: UUID?
+        let markerStyle: MarkerStyle
+        /// Static window length (seconds) to fall back to in `calculateAccountElapsedRatio` when
+        /// `windowSeconds` is nil (code-review fix 3b). Explicitly provider-scoped rather than guessed
+        /// from `markerStyle`: Claude's fiveHour/sevenDay windows really are always 18000s/604800s, so
+        /// they get a value here; Codex's window length is data-driven and must never be guessed, so
+        /// its points always pass nil (relying purely on `windowSeconds`, or not being plotted at all —
+        /// see `AccountUsageSnapshot.codexWrapper`'s `isPlottable`-equivalent guard).
+        let fallbackWindowSeconds: TimeInterval?
     }
 
     // MARK: - Body
@@ -80,7 +109,7 @@ struct LinearUsageGraphView: View {
             } else {
                 // Loading or no data state
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 2)
+                    .stroke(Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a"), lineWidth: 2)
                     .frame(width: graphWidth - padding * 2, height: graphHeight - padding * 2)
 
                 if isRefreshing {
@@ -100,7 +129,7 @@ struct LinearUsageGraphView: View {
 
     /// Draw subtle horizontal grid lines at 25%, 50%, 75%, 100%
     private func drawGrid(context: GraphicsContext, in rect: CGRect) {
-        let gridColor = Color.gray.opacity(0.15)
+        let gridColor = Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a")
 
         for percentage in stride(from: 25.0, through: 100.0, by: 25.0) {
             let y = rect.maxY - (CGFloat(percentage) / 100.0 * rect.height)
@@ -126,7 +155,7 @@ struct LinearUsageGraphView: View {
         // Draw border
         var borderPath = Path()
         borderPath.addRect(rect)
-        context.stroke(borderPath, with: .color(Color.gray.opacity(0.3)), lineWidth: gridLineWidth)
+        context.stroke(borderPath, with: .color(Color.dynamic(light: "#e1e0d9", dark: "#2c2c2a")), lineWidth: gridLineWidth)
     }
 
     /// Draw dashed diagonal line representing ideal pace (0,0) to (1,100)
@@ -150,7 +179,12 @@ struct LinearUsageGraphView: View {
         // Reset per-draw; Canvas closures re-run on every redraw so this never leaks across frames.
         var drawnLabelRects: [CGRect] = []
 
-        for limitType in activeDisplayTypes {
+        // New (P03): per-account 5h/7d (+ Codex primary, wrapped) points, colored by `AccountColor`.
+        drawAccountPoints(context: context, in: rect, drawnLabelRects: &drawnLabelRects)
+
+        // Legacy (unchanged by P03): remaining single-account limit types still drive their dot from
+        // `usageData`/`codexUsageData` via `resolve(_:)`, colored by percentage as before.
+        for limitType in activeDisplayTypes where legacyLimitTypes.contains(limitType) {
             guard let resolved = resolve(limitType) else { continue }
 
             let xNormalized = calculateElapsedTimeRatio(
@@ -186,6 +220,163 @@ struct LinearUsageGraphView: View {
                 drawnLabelRects: &drawnLabelRects
             )
         }
+    }
+
+    /// Build and draw the new account-driven points (P03): 2 per saved Claude account (5h outline,
+    /// 7d filled) plus 1 for Codex's wrapped single-account snapshot (primary, outline). Both windows
+    /// are skipped per-account/window when their `WindowUsage?` is nil, matching today's behavior of
+    /// not showing a dot for a window with no data.
+    private func drawAccountPoints(context: GraphicsContext, in rect: CGRect, drawnLabelRects: inout [CGRect]) {
+        var points: [ResolvedPoint] = []
+
+        for snapshot in claudeSnapshots {
+            if let fiveHour = snapshot.fiveHour, activeDisplayTypes.contains(.fiveHour) {
+                points.append(ResolvedPoint(
+                    percentage: fiveHour.percentage,
+                    resetsAt: fiveHour.resetsAt,
+                    windowSeconds: fiveHour.windowSeconds,
+                    color: snapshot.color.swiftUIColor,
+                    accountId: snapshot.accountId,
+                    markerStyle: .outline,
+                    fallbackWindowSeconds: 5 * 3600
+                ))
+            }
+            if let sevenDay = snapshot.sevenDay, activeDisplayTypes.contains(.sevenDay) {
+                points.append(ResolvedPoint(
+                    percentage: sevenDay.percentage,
+                    resetsAt: sevenDay.resetsAt,
+                    windowSeconds: sevenDay.windowSeconds,
+                    color: snapshot.color.swiftUIColor,
+                    accountId: snapshot.accountId,
+                    markerStyle: .filled,
+                    fallbackWindowSeconds: 7 * 24 * 3600
+                ))
+            }
+        }
+
+        if activeDisplayTypes.contains(.codexPrimary),
+           let codexSnapshot = AccountUsageSnapshot.codexWrapper(from: codexUsageData, account: UserSettings.shared.currentCodexAccount),
+           let primary = codexSnapshot.fiveHour,
+           // Plottability guard (code-review fix, chart-only): when there's a reset time but no
+           // known window length, we cannot compute a meaningful x-position. Skip only the chart
+           // dot here — `codexWrapper` itself no longer applies this guard, so the legend row
+           // (`PopoverLayout.legendItems`) still renders unconditionally.
+           primary.resetsAt == nil || (primary.windowSeconds ?? 0) > 0 {
+            points.append(ResolvedPoint(
+                percentage: primary.percentage,
+                resetsAt: primary.resetsAt,
+                windowSeconds: primary.windowSeconds,
+                color: codexSnapshot.color.swiftUIColor,
+                accountId: codexSnapshot.accountId,
+                markerStyle: .outline,
+                // Codex must never guess a window length (code-review fix 3b): no fallback here.
+                // `AccountUsageSnapshot.codexWrapper` already guarantees `windowSeconds` is known
+                // whenever `resetsAt` is non-nil, so `calculateAccountElapsedRatio` never actually
+                // needs this fallback for a Codex point — but it stays nil to make that explicit
+                // rather than relying on `markerStyle` to infer provider.
+                fallbackWindowSeconds: nil
+            ))
+        }
+
+        if activeDisplayTypes.contains(.codexSecondary),
+           let codexSnapshot = AccountUsageSnapshot.codexWrapper(from: codexUsageData, account: UserSettings.shared.currentCodexAccount),
+           let secondary = codexSnapshot.sevenDay,
+           // Plottability guard (code-review fix, chart-only): when there's a reset time but no
+           // known window length, we cannot compute a meaningful x-position. Skip only the chart
+           // dot here — `codexWrapper` itself no longer applies this guard, so the legend row
+           // (`PopoverLayout.legendItems`) still renders unconditionally.
+           secondary.resetsAt == nil || (secondary.windowSeconds ?? 0) > 0 {
+            points.append(ResolvedPoint(
+                percentage: secondary.percentage,
+                resetsAt: secondary.resetsAt,
+                windowSeconds: secondary.windowSeconds,
+                color: codexSnapshot.color.swiftUIColor,
+                accountId: codexSnapshot.accountId,
+                markerStyle: .filled,
+                // Codex must never guess a window length (code-review fix 3b): no fallback here.
+                // `AccountUsageSnapshot.codexWrapper` already guarantees `windowSeconds` is known
+                // whenever `resetsAt` is non-nil, so `calculateAccountElapsedRatio` never actually
+                // needs this fallback for a Codex point — but it stays nil to make that explicit
+                // rather than relying on `markerStyle` to infer provider.
+                fallbackWindowSeconds: nil
+            ))
+        }
+
+        for resolved in points {
+            let xNormalized = calculateAccountElapsedRatio(
+                resetsAt: resolved.resetsAt,
+                windowSeconds: resolved.windowSeconds,
+                fallbackWindowSeconds: resolved.fallbackWindowSeconds
+            )
+            let point = calculatePoint(percentage: resolved.percentage, xNormalized: xNormalized, in: rect)
+
+            drawAccountDot(context: context, at: point, resolved: resolved)
+
+            drawPercentageLabel(
+                context: context,
+                at: point,
+                percentage: resolved.percentage,
+                in: rect,
+                drawnLabelRects: &drawnLabelRects
+            )
+        }
+    }
+
+    /// Draw a single account-driven marker: `.outline` (5h) is a stroked ring with no fill, `.filled`
+    /// (7d) is a filled circle with a white border (same look as the legacy dot). Both get a red
+    /// warning ring overlay on top when `UsageColorScheme.isNearLimit` — the overlay carries urgency,
+    /// the base color still carries account identity (shared logic, coordinate with phase 05).
+    private func drawAccountDot(context: GraphicsContext, at point: CGPoint, resolved: ResolvedPoint) {
+        let dotRect = CGRect(
+            x: point.x - dotRadius,
+            y: point.y - dotRadius,
+            width: dotRadius * 2,
+            height: dotRadius * 2
+        )
+
+        switch resolved.markerStyle {
+        case .outline:
+            context.stroke(Circle().path(in: dotRect), with: .color(resolved.color), lineWidth: 2)
+        case .filled, .legacy:
+            context.fill(Circle().path(in: dotRect), with: .color(resolved.color))
+            context.stroke(Circle().path(in: dotRect), with: .color(.white.opacity(0.8)), lineWidth: 1)
+        }
+
+        if UsageColorScheme.isNearLimit(percentage: resolved.percentage) {
+            let overlayRect = dotRect.insetBy(dx: -2, dy: -2)
+            context.stroke(Circle().path(in: overlayRect), with: .color(.red), lineWidth: 1.5)
+        }
+    }
+
+    /// Elapsed-time ratio for account-driven points (P03 equivalent of `calculateElapsedTimeRatio`,
+    /// which is keyed by `LimitType` and therefore unusable here). Falls back to the static 5h/7d
+    /// window length — keyed by `markerStyle` rather than `LimitType` — only when `windowSeconds` is
+    /// unknown, same convention as the legacy calculation.
+    private func calculateAccountElapsedRatio(
+        resetsAt: Date?,
+        windowSeconds: TimeInterval?,
+        fallbackWindowSeconds: TimeInterval?
+    ) -> CGFloat {
+        guard let resetsAt else { return 0 }
+
+        let totalWindow: TimeInterval
+        if let windowSeconds, windowSeconds > 0 {
+            totalWindow = windowSeconds
+        } else if let fallbackWindowSeconds, fallbackWindowSeconds > 0 {
+            // Only Claude points carry a non-nil `fallbackWindowSeconds` (code-review fix 3b): their
+            // 5h/7d windows really are fixed, unlike Codex's data-driven window length.
+            totalWindow = fallbackWindowSeconds
+        } else {
+            // No real window and no justified fallback (Codex with an unknown window) — don't invent
+            // a position; `AccountUsageSnapshot.codexWrapper` should already have kept this point from
+            // being built at all, but return 0 rather than a fabricated x-position as a last resort.
+            return 0
+        }
+
+        let remainingTime = resetsAt.timeIntervalSinceNow
+        let elapsedTime = totalWindow - remainingTime
+        let ratio = elapsedTime / totalWindow
+        return CGFloat(max(0, min(1, ratio)))
     }
 
     /// Draw percentage label near a data point, greedily avoiding overlap with previously drawn labels.
@@ -327,7 +518,10 @@ struct LinearUsageGraphView: View {
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
                 windowSeconds: nil,
-                color: UsageColorScheme.fiveHourColorSwiftUI(limit.percentage)
+                color: UsageColorScheme.fiveHourColorSwiftUI(limit.percentage),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .sevenDay:
             guard let data = usageData, let limit = data.sevenDay else { return nil }
@@ -335,7 +529,10 @@ struct LinearUsageGraphView: View {
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
                 windowSeconds: nil,
-                color: UsageColorScheme.sevenDayColorSwiftUI(limit.percentage)
+                color: UsageColorScheme.sevenDayColorSwiftUI(limit.percentage),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .opusWeekly:
             guard let data = usageData, let limit = data.opus else { return nil }
@@ -343,7 +540,10 @@ struct LinearUsageGraphView: View {
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
                 windowSeconds: nil,
-                color: Color(UsageColorScheme.opusWeeklyColor(limit.percentage))
+                color: Color(UsageColorScheme.opusWeeklyColor(limit.percentage)),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .sonnetWeekly:
             guard let data = usageData, let limit = data.sonnet else { return nil }
@@ -351,7 +551,10 @@ struct LinearUsageGraphView: View {
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
                 windowSeconds: nil,
-                color: Color(UsageColorScheme.sonnetWeeklyColor(limit.percentage))
+                color: Color(UsageColorScheme.sonnetWeeklyColor(limit.percentage)),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .extraUsage:
             // ExtraUsageData has different structure and no resetsAt; keep plotting it at x=0
@@ -363,7 +566,10 @@ struct LinearUsageGraphView: View {
                 percentage: percentage,
                 resetsAt: nil,
                 windowSeconds: nil,
-                color: Color(UsageColorScheme.extraUsageColor(percentage))
+                color: Color(UsageColorScheme.extraUsageColor(percentage)),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .codexPrimary:
             guard let limit = codexUsageData?.primary, isPlottable(limit) else { return nil }
@@ -371,7 +577,10 @@ struct LinearUsageGraphView: View {
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
                 windowSeconds: limit.windowSeconds,
-                color: UsageColorScheme.codexPrimaryColorSwiftUI(limit.percentage)
+                color: UsageColorScheme.codexPrimaryColorSwiftUI(limit.percentage),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .codexSecondary:
             // secondary_window is null on this account today (P01/P03 finding); guard makes that a
@@ -381,7 +590,10 @@ struct LinearUsageGraphView: View {
                 percentage: limit.percentage,
                 resetsAt: limit.resetsAt,
                 windowSeconds: limit.windowSeconds,
-                color: UsageColorScheme.codexSecondaryColorSwiftUI(limit.percentage)
+                color: UsageColorScheme.codexSecondaryColorSwiftUI(limit.percentage),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         case .codexExtraUsage:
             // Same x=0 convention as Claude's `.extraUsage` (no resetsAt), for consistency.
@@ -392,7 +604,10 @@ struct LinearUsageGraphView: View {
                 percentage: percentage,
                 resetsAt: nil,
                 windowSeconds: nil,
-                color: UsageColorScheme.codexExtraUsageColorSwiftUI(percentage)
+                color: UsageColorScheme.codexExtraUsageColorSwiftUI(percentage),
+                accountId: nil,
+                markerStyle: .legacy,
+                fallbackWindowSeconds: nil
             )
         }
     }

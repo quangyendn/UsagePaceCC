@@ -37,6 +37,16 @@ enum UsageColorScheme {
         return isDarkMode(for: nil)
     }
 
+
+    // MARK: - 临近上限阈值（P03/P05 共用）
+
+    /// 是否已「临近上限」，用于图表/图例/图标共用的警示叠加层。
+    /// 沿用现有 5 小时限制配色的危险阈值（≥90% 红色），而非另起一套阈值——
+    /// 详见 plan.md Open Question 2。
+    static func isNearLimit(percentage: Double) -> Bool {
+        percentage >= 90
+    }
+
     // MARK: - 5小时限制配色（绿→橙→红）
 
     /// 根据5小时限制使用百分比返回 NSColor
@@ -391,6 +401,54 @@ enum UsageColorScheme {
         }
     }
     */
+}
+
+// MARK: - Hex → 动态颜色
+
+extension NSColor {
+    /// 从 `#RRGGBB` 或 `RRGGBB` 十六进制字符串创建颜色；格式非法时回退为不透明黑色，
+    /// 避免调用方需要处理 optional（调用点分布在 `AccountColor.swift`、
+    /// `LinearUsageGraphView.swift`、`UsageRowComponents.swift` 中，均为编译期已知的合法字面量）。
+    convenience init(hexString: String) {
+        var hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") {
+            hex.removeFirst()
+        }
+
+        // 仅接受 6 位 `RRGGBB`；8 位 `RRGGBBAA` 若直接按 6 位逻辑解析会把字节错位
+        // （alpha 字节被当成蓝色分量的一部分），得到一个看似合理实则错误的颜色而不报错。
+        // 开发期用 assertionFailure 及早暴露，Release 下显式拒绝并回退为不透明黑色，
+        // 避免悄悄渲染出错误颜色。
+        guard hex.count == 6 else {
+            assertionFailure("NSColor(hexString:) 期望 6 位 RRGGBB，实际收到 \"\(hexString)\"")
+            self.init(red: 0, green: 0, blue: 0, alpha: 1.0)
+            return
+        }
+
+        var rgbValue: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&rgbValue)
+
+        let red = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
+        let green = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
+        let blue = CGFloat(rgbValue & 0x0000FF) / 255.0
+
+        self.init(red: red, green: green, blue: blue, alpha: 1.0)
+    }
+
+    /// 随浅色/深色外观自动切换的动态颜色，由一对十六进制字符串定义。
+    static func dynamic(light lightHex: String, dark darkHex: String) -> NSColor {
+        NSColor(name: nil, dynamicProvider: { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(hexString: isDark ? darkHex : lightHex)
+        })
+    }
+}
+
+extension Color {
+    /// SwiftUI 版本的动态颜色，桥接自 `NSColor.dynamic(light:dark:)`，随系统外观自动切换。
+    static func dynamic(light lightHex: String, dark darkHex: String) -> Color {
+        Color(nsColor: NSColor.dynamic(light: lightHex, dark: darkHex))
+    }
 }
 
 // MARK: - NSColor 扩展

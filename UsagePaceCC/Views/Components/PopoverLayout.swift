@@ -33,16 +33,14 @@ enum PopoverLayout {
     ///   按这个列表渲染，`rowCount` 按同一个列表计数；两边各算各的就会出现「布局留了 3 行、
     ///   视图只画 2 行」这种永久空白。改这里之前先确认两边都还对得上。
     ///
-    /// - Circular 模式下 Codex 完全不出现（D5′）——不论圆环还是 legend 行。
-    /// - Linear 模式下 Claude 行与 Codex 行在同一列纵向堆叠（不再是并排双列取 max，而是相加）。
+    /// Claude 行与 Codex 行在同一列纵向堆叠（不再是并排双列取 max，而是相加）。
     /// - `codexErrorMessage` 非 nil 时，Codex 的 legend 行整体被 `codexErrorRow` 顶替。
     /// - 数据为 nil 的 Provider 一行都不出：`.custom` 模式下 `getActiveDisplayTypes` 无视
     ///   数据是否存在都会返回用户勾选的类型，照单全收会让还在转菊花的弹窗按满高打开。
     static func legendTypes(
         usageData: UsageData?,
         codexUsageData: CodexUsageData?,
-        codexErrorMessage: String?,
-        graphDisplayType: GraphDisplayType
+        codexErrorMessage: String?
     ) -> [LimitType] {
         let combined = UserSettings.shared.getActiveDisplayTypes(
             usageData: usageData,
@@ -50,64 +48,108 @@ enum PopoverLayout {
         )
         let claudeTypes = usageData == nil ? [] : combined.filter { $0.provider == .claude }
 
-        switch graphDisplayType {
-        case .circular:
-            return claudeTypes
-        case .linear:
-            guard codexErrorMessage == nil, codexUsageData != nil else { return claudeTypes }
-            return claudeTypes + combined.filter { $0.provider == .codex }
-        }
-    }
-
-    /// 单个类型是否展开成两行 InfoRow（倒计时 + 重置时间）。
-    ///
-    /// - Important: 这是**视图和高度计算共用的第二个唯一来源**。仅"Claude 的 5 小时 / 7 天
-    ///   且对应数据确实存在"才展开；其余单类型（`.opusWeekly` / `.sonnetWeekly` /
-    ///   `.extraUsage`，或 payload 里缺了 `five_hour` 的 `.fiveHour`）走单行
-    ///   `UnifiedLimitRow`。之前这里按「单个 Claude 类型」一律算两行，而视图只在上述两种
-    ///   情况下才画 InfoRow —— 自定义模式下只勾选 Opus Weekly 时，布局留了两行、视图一行
-    ///   都不画，弹窗底部空出约 57pt。
-    static func expandsToTwoInfoRows(type: LimitType, usageData: UsageData?) -> Bool {
-        guard type.provider == .claude, let data = usageData else { return false }
-        switch type {
-        case .fiveHour: return data.fiveHour != nil
-        case .sevenDay: return data.sevenDay != nil
-        default: return false
-        }
+        guard codexErrorMessage == nil, codexUsageData != nil else { return claudeTypes }
+        return claudeTypes + combined.filter { $0.provider == .codex }
     }
 
     /// 计算单列弹出窗口中实际渲染的行数（legend 行 + Codex 错误行，二者互斥）。
     ///
     /// 行数规则与 `UsageDetailView.legendSection` 一一对应：
-    /// - 只有一个类型且 `expandsToTwoInfoRows` 为真：渲染两行 InfoRow（沿用改动前的行为），按 2 计。
-    /// - 只有一个类型且不展开：渲染一行 `UnifiedLimitRow`，按 1 计。
-    /// - 其余情况：行数 = 类型数。
-    /// - `codexErrorRow` 固定占一行——这样 CLI token 每 ~10 天过期一次时，弹出窗口不会因为
-    ///   「有数据 → 报错」的切换而跳动或改变高度。
+    /// - 账户驱动的 5h/7d/codexPrimary 行改由 `legendItems` 计数，
+    ///   其余类型仍按旧的 `legendTypes` 计数——两套计数机制相加，不重复计、不漏计。
+    /// - `codexErrorRow` 固定占一行——这样 CLI token 每 ~10 天过期一次时，
+    ///   弹出窗口不会因为「有数据 → 报错」的切换而跳动或改变高度。
     static func rowCount(
         usageData: UsageData?,
         codexUsageData: CodexUsageData?,
         codexErrorMessage: String?,
-        graphDisplayType: GraphDisplayType
+        claudeSnapshots: [AccountUsageSnapshot] = [],
+        codexAccount: Account? = nil
     ) -> Int {
-        let types = legendTypes(
+        let activeTypes = UserSettings.shared.getActiveDisplayTypes(
+            usageData: usageData,
+            codexUsageData: codexUsageData
+        )
+        let accountRows = legendItems(
+            claudeSnapshots: claudeSnapshots,
+            codexUsageData: codexUsageData,
+            codexAccount: codexAccount,
+            activeDisplayTypes: activeTypes
+        ).count
+        let legacyRows = linearLegacyTypes(
             usageData: usageData,
             codexUsageData: codexUsageData,
-            codexErrorMessage: codexErrorMessage,
-            graphDisplayType: graphDisplayType
-        )
+            codexErrorMessage: codexErrorMessage
+        ).count
 
-        var rows: Int
-        if types.count == 1 {
-            rows = expandsToTwoInfoRows(type: types[0], usageData: usageData) ? 2 : 1
-        } else {
-            rows = types.count
-        }
-
-        if graphDisplayType == .linear, codexErrorMessage != nil {
+        var rows = accountRows + legacyRows
+        if codexErrorMessage != nil {
             rows += 1
         }
-
         return rows
+    }
+
+    // MARK: - Account-driven legend rows (P03)
+
+    /// `LimitType`s now rendered via the account-driven path (`legendItems`/`ResolvedPoint` with
+    /// `accountId`/`markerStyle`) instead of the legacy single-account `usageData`/`codexUsageData`
+    /// path.
+    private static func isAccountDrivenType(_ type: LimitType) -> Bool {
+        type == .fiveHour || type == .sevenDay || type == .codexPrimary || type == .codexSecondary
+    }
+
+    /// Legend types still rendered via the legacy path (opus/sonnet/extra/codexExtraUsage) —
+    /// everything `legendTypes` would return minus the ones `legendItems` now covers.
+    static func linearLegacyTypes(
+        usageData: UsageData?,
+        codexUsageData: CodexUsageData?,
+        codexErrorMessage: String?
+    ) -> [LimitType] {
+        legendTypes(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            codexErrorMessage: codexErrorMessage
+        ).filter { !isAccountDrivenType($0) }
+    }
+
+    /// Single source of truth for the new account-driven legend rows (P03): 2 rows per saved Claude
+    /// account (5h, 7d — skipped per-window when that `WindowUsage?` is nil) plus up to 2 rows for
+    /// Codex's wrapped single-account snapshot (primary/5h + secondary/7d, each bound and skipped
+    /// independently — a `nil` primary must never suppress a present secondary, and vice versa).
+    /// Shared by `UsageDetailView.legendSection` and `rowCount` so the two never drift apart.
+    ///
+    /// - Parameter activeDisplayTypes: user's custom-mode selection (code-review fix 2). A row is only
+    ///   emitted when its `LimitType` (`.fiveHour`/`.sevenDay`/`.codexPrimary`/`.codexSecondary`) is in
+    ///   this list — same rule the legacy path already applies via `legacyLimitTypes.contains`
+    ///   filtering. Defaults to `[.fiveHour, .sevenDay, .codexPrimary, .codexSecondary]` (i.e. no
+    ///   filtering) so existing/preview call sites that don't care about custom-mode selection keep
+    ///   compiling unchanged.
+    static func legendItems(
+        claudeSnapshots: [AccountUsageSnapshot],
+        codexUsageData: CodexUsageData?,
+        codexAccount: Account? = nil,
+        activeDisplayTypes: [LimitType] = [.fiveHour, .sevenDay, .codexPrimary, .codexSecondary]
+    ) -> [LegendRowItem] {
+        var items: [LegendRowItem] = []
+
+        for snapshot in claudeSnapshots {
+            if snapshot.fiveHour != nil, activeDisplayTypes.contains(.fiveHour) {
+                items.append(LegendRowItem(accountId: snapshot.accountId, snapshot: snapshot, window: .fiveHour))
+            }
+            if snapshot.sevenDay != nil, activeDisplayTypes.contains(.sevenDay) {
+                items.append(LegendRowItem(accountId: snapshot.accountId, snapshot: snapshot, window: .sevenDay))
+            }
+        }
+
+        if let codexSnapshot = AccountUsageSnapshot.codexWrapper(from: codexUsageData, account: codexAccount) {
+            if activeDisplayTypes.contains(.codexPrimary), codexSnapshot.fiveHour != nil {
+                items.append(LegendRowItem(accountId: codexSnapshot.accountId, snapshot: codexSnapshot, window: .fiveHour))
+            }
+            if activeDisplayTypes.contains(.codexSecondary), codexSnapshot.sevenDay != nil {
+                items.append(LegendRowItem(accountId: codexSnapshot.accountId, snapshot: codexSnapshot, window: .sevenDay))
+            }
+        }
+
+        return items
     }
 }

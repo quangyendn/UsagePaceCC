@@ -137,6 +137,18 @@ enum TimeFormatHelper {
         return "\(dateString) \(timeString)"
     }
 
+
+    /// 固定格式、与用户 12h/24h 偏好和语言无关的时间格式化（P03）。
+    /// 多账户图例行需要跨账户一致对比重置时间，不能像其它格式化方法那样
+    /// 随 `UserSettings.shared.timeFormatPreference`/`appLocale` 变化，因此显式
+    /// 使用 `en_US_POSIX`，强制 24 小时制、不受系统区域设置重新解释。
+    static func formatFixed(_ date: Date, format: String = "MM/dd HH:mm") -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = format
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter.string(from: date)
+    }
+
     // MARK: - Detection
 
     /// 检测当前是否应该使用 24 小时格式

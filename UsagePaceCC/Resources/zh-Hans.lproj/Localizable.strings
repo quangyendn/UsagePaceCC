@@ -253,6 +253,9 @@
 "codex_primary_limit" = "Codex 5小时限制";
 "codex_secondary_limit" = "Codex 7天限制";
 "codex_extra_usage" = "Codex 额外用量";
+"codex_primary_limit_short" = "5h";
+"codex_secondary_limit_short" = "7d";
+"codex_limit_neutral_short" = "Codex";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5小时限制";
@@ -354,12 +357,6 @@
 "extra_usage.detail_credits_balance" = "%d 点";
 "extra_usage.detail_credits_remaining" = "还剩 %d 点";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "彩虹渐变";
-"loading_animation.dashed" = "虚线旋转";
-"loading_animation.pulse" = "脉冲效果";
-"loading_animation.current" = "加载动画: %@";
-
 // MARK: - Time Format
 "time_format.system" = "跟随系统";
 "time_format.twelve_hour" = "12 小时制（下午 2:30）";
@@ -402,8 +399,10 @@
 "notification.description" = "当任意限制达到 90%%，或用量重置时，发送系统通知。";
 "notification.warning_title" = "用量警告";
 "notification.warning_body" = "%@ 已达到 %d%% 用量";
+"notification.warning_body_with_account" = "%@ · %@ 已达到 %d%% 用量";
 "notification.reset_title" = "用量已重置";
 "notification.reset_body" = "%@ 用量已重置";
+"notification.reset_body_with_account" = "%@ · %@ 用量已重置";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "登录 Claude";
@@ -425,13 +424,3 @@
 "account.codex_accounts" = "Codex 账户";
 "account.add_codex_account" = "添加 Codex 账户";
 "account.codex_current_account" = "当前 Codex 账户";
-
-// MARK: - Graph Type
-"graph_type.circular" = "圆形";
-"graph_type.linear" = "线性";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "图表样式";
-"graph_style.hint" = "选择使用量的显示方式";
-"graph_style.circular_description" = "以百分比圆环显示使用量";
-"graph_style.linear_description" = "以时间线和速度预测显示使用量";

@@ -20,16 +20,51 @@ class ClaudeAPIService {
     
     /// 用户设置实例，用于获取认证信息
     private let settings = UserSettings.shared
-    
+
     /// 共享的 URLSession 实例
     private let session: URLSession
 
     /// 当前正在执行的网络请求任务
     private var currentTask: URLSessionDataTask?
 
+    /// 所有正在进行中的网络请求任务（主 Usage + Extra Usage），用于 `cancelAllRequests()` 统一取消
+    private var inFlightTasks: [URLSessionDataTask] = []
+
+    /// 保护 `inFlightTasks`/`currentTask` 的锁：这两个属性会同时被主线程（`fetchMainUsage`/
+    /// `fetchExtraUsage` 发起请求前、`cancelAllRequests()`）与 URLSession 的 delegate 队列
+    /// （后台线程，通过 completion handler 中的 `removeInFlightTask`）修改，必须加锁避免并发数组读写导致的未定义行为
+    private let stateLock = NSLock()
+
+    /// 绑定的账户（多账户拉取场景下每个账户各持有一个 `ClaudeAPIService` 实例）；
+    /// 为 nil 时回退到 `settings` 当前激活账户，保持旧调用方（登录流程等仅用 fetchOrganizations 的场景）兼容
+    private let boundAccount: Account?
+
+    // MARK: - Resolved Credentials
+
+    /// 解析后的 Organization ID：优先使用绑定账户，否则回退到 `settings.organizationId`
+    private var resolvedOrgId: String {
+        boundAccount?.organizationId ?? settings.organizationId
+    }
+
+    /// 解析后的 Session Key：优先使用绑定账户，否则回退到 `settings.sessionKey`
+    private var resolvedSessionKey: String {
+        boundAccount?.sessionKey ?? settings.sessionKey
+    }
+
+    /// 是否已配置有效凭据：优先检查绑定账户，否则回退到 `settings.hasValidCredentials`
+    private var hasCredentials: Bool {
+        if let account = boundAccount {
+            return !account.organizationId.isEmpty && !account.sessionKey.isEmpty
+        }
+        return settings.hasValidCredentials
+    }
+
     // MARK: - Initialization
-    
-    init() {
+
+    /// - Parameter account: 绑定的账户；nil 表示回退到 `settings` 当前激活账户（向后兼容旧调用方）
+    init(account: Account? = nil) {
+        self.boundAccount = account
+
         // 配置 URLSession
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30  // 请求超时：30秒
@@ -37,10 +72,13 @@ class ClaudeAPIService {
         configuration.httpCookieAcceptPolicy = .always
         configuration.httpShouldSetCookies = true
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData  // 不使用缓存
-        
+        // 不共享 Cookie 存储：凭据完全通过 ClaudeAPIHeaderBuilder 显式设置的 Cookie header 传递，
+        // 避免多账户场景下 URLSession 的隐式 Cookie 存储导致账户 A 的 sessionKey 泄漏进账户 B 的请求
+        configuration.httpCookieStorage = nil
+
         self.session = URLSession(configuration: configuration)
     }
-    
+
     // MARK: - Public Methods
     
     /// 获取用户的 Claude 使用情况（并行获取主用量和 Extra Usage）
@@ -61,10 +99,10 @@ class ClaudeAPIService {
         #endif
 
         // 取消之前的请求（如果存在）
-        currentTask?.cancel()
+        cancelAllRequests()
 
         // 检查认证信息
-        guard settings.hasValidCredentials else {
+        guard hasCredentials else {
             completion(.failure(UsageError.noCredentials))
             return
         }
@@ -130,7 +168,7 @@ class ClaudeAPIService {
     /// 获取主 Usage API 数据（内部方法）
     /// - Parameter completion: 完成回调
     private func fetchMainUsage(completion: @escaping (Result<UsageData, Error>) -> Void) {
-        let urlString = "\(baseURL)/\(settings.organizationId)/usage"
+        let urlString = "\(baseURL)/\(resolvedOrgId)/usage"
 
         guard let url = URL(string: urlString) else {
             completion(.failure(UsageError.invalidURL))
@@ -144,12 +182,14 @@ class ClaudeAPIService {
         // 使用统一的 Header 构建器添加完整的浏览器 Headers 以绕过 Cloudflare
         ClaudeAPIHeaderBuilder.applyHeaders(
             to: &request,
-            organizationId: settings.organizationId,
-            sessionKey: settings.sessionKey
+            organizationId: resolvedOrgId,
+            sessionKey: resolvedSessionKey
         )
 
         // 创建并保存任务引用
-        currentTask = session.dataTask(with: request) { data, response, error in
+        var task: URLSessionDataTask!
+        task = session.dataTask(with: request) { [weak self] data, response, error in
+            defer { self?.removeInFlightTask(task) }
             if let error = error {
                 Logger.api.debug("Network error: \(error.localizedDescription)")
                 completion(.failure(UsageError.networkError))
@@ -224,7 +264,8 @@ class ClaudeAPIService {
         }
 
         // 启动任务
-        currentTask?.resume()
+        addInFlightTask(task)
+        task.resume()
     }
 
     /// 获取用户的组织列表
@@ -324,12 +365,12 @@ class ClaudeAPIService {
     /// - Note: 此方法是可选的，即使失败也不应影响主要功能
     func fetchExtraUsage(completion: @escaping (Result<ExtraUsageData?, Error>) -> Void) {
         // 检查认证信息
-        guard settings.hasValidCredentials else {
+        guard hasCredentials else {
             completion(.failure(UsageError.noCredentials))
             return
         }
 
-        let urlString = "\(baseURL)/\(settings.organizationId)/overage_spend_limit"
+        let urlString = "\(baseURL)/\(resolvedOrgId)/overage_spend_limit"
 
         guard let url = URL(string: urlString) else {
             completion(.failure(UsageError.invalidURL))
@@ -343,11 +384,13 @@ class ClaudeAPIService {
         // 使用统一的 Header 构建器添加完整的浏览器 Headers
         ClaudeAPIHeaderBuilder.applyHeaders(
             to: &request,
-            organizationId: settings.organizationId,
-            sessionKey: settings.sessionKey
+            organizationId: resolvedOrgId,
+            sessionKey: resolvedSessionKey
         )
 
-        let task = session.dataTask(with: request) { data, response, error in
+        var task: URLSessionDataTask!
+        task = session.dataTask(with: request) { [weak self] data, response, error in
+            defer { self?.removeInFlightTask(task) }
             if let error = error {
                 Logger.api.debug("Extra Usage API network error: \(error.localizedDescription)")
                 DispatchQueue.main.async {
@@ -413,14 +456,39 @@ class ClaudeAPIService {
             }
         }
 
+        addInFlightTask(task)
         task.resume()
+    }
+
+    /// 将任务加入在途任务集合并设为当前任务（线程安全：见 `stateLock` 注释）
+    private func addInFlightTask(_ task: URLSessionDataTask) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        inFlightTasks.append(task)
+        currentTask = task
+    }
+
+    /// 从在途任务集合中移除指定任务（任务完成或失败时调用，可能运行在 URLSession 的后台队列上）
+    private func removeInFlightTask(_ task: URLSessionDataTask?) {
+        guard let task = task else { return }
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        inFlightTasks.removeAll { $0 === task }
+        if currentTask === task {
+            currentTask = nil
+        }
     }
 
     /// 取消所有正在进行的网络请求
     /// 在应用退出或需要中断请求时调用
     func cancelAllRequests() {
-        currentTask?.cancel()
+        stateLock.lock()
+        let tasks = inFlightTasks
+        inFlightTasks.removeAll()
         currentTask = nil
+        stateLock.unlock()
+        // 在锁外取消，避免在持锁时触发 URLSession 的回调（可能导致死锁）
+        tasks.forEach { $0.cancel() }
         Logger.api.debug("已取消所有网络请求")
     }
 
