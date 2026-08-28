@@ -253,6 +253,9 @@
 "codex_primary_limit" = "Limite Codex 5 heures";
 "codex_secondary_limit" = "Limite Codex 7 jours";
 "codex_extra_usage" = "Utilisation supplémentaire Codex";
+"codex_primary_limit_short" = "5h";
+"codex_secondary_limit_short" = "7j";
+"codex_limit_neutral_short" = "Codex";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "Limite 5 h";
@@ -356,12 +359,6 @@
 "extra_usage.detail_credits_balance" = "%d crédits";
 "extra_usage.detail_credits_remaining" = "%d crédits restants";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "Dégradé arc-en-ciel";
-"loading_animation.dashed" = "Rotation en pointillés";
-"loading_animation.pulse" = "Effet de pulsation";
-"loading_animation.current" = "Animation de chargement : %@";
-
 // MARK: - Time Format
 "time_format.system" = "Suivre le système";
 "time_format.twelve_hour" = "12 heures (2:30 PM)";
@@ -404,8 +401,10 @@
 "notification.description" = "Recevoir une notification lorsqu'une limite atteint 90 %%, ou lorsque l'utilisation est réinitialisée.";
 "notification.warning_title" = "Avertissement d'utilisation";
 "notification.warning_body" = "%@ a atteint %d %% d'utilisation";
+"notification.warning_body_with_account" = "%@ · %@ a atteint %d %% d'utilisation";
 "notification.reset_title" = "Réinitialisation de l'utilisation";
 "notification.reset_body" = "L'utilisation de %@ a été réinitialisée";
+"notification.reset_body_with_account" = "%@ · l'utilisation de %@ a été réinitialisée";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "Se connecter à Claude";
@@ -427,13 +426,3 @@
 "account.codex_accounts" = "Comptes Codex";
 "account.add_codex_account" = "Ajouter un compte Codex";
 "account.codex_current_account" = "Compte Codex actuel";
-
-// MARK: - Graph Type
-"graph_type.circular" = "Circulaire";
-"graph_type.linear" = "Linéaire";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "Style du graphique";
-"graph_style.hint" = "Choisissez le mode de visualisation de l'utilisation";
-"graph_style.circular_description" = "Affiche l'utilisation sous forme d'anneau de pourcentage";
-"graph_style.linear_description" = "Affiche la chronologie d'utilisation avec prédiction de cadence";

@@ -14,6 +14,7 @@ struct Account: Codable, Identifiable, Equatable {
     var organizationId: String
     var organizationName: String
     var alias: String?
+    var color: AccountColor
     let createdAt: Date
     var provider: ProviderType
 
@@ -27,12 +28,13 @@ struct Account: Codable, Identifiable, Equatable {
     // MARK: - CodingKeys
 
     private enum CodingKeys: String, CodingKey {
-        case id, sessionKey, organizationId, organizationName, alias, createdAt, provider
+        case id, sessionKey, organizationId, organizationName, alias, color, createdAt, provider
     }
 
     // MARK: - Codable
 
-    // 自定义解码：旧版 JSON 不含 provider 字段时默认为 .claude，确保旧账号数据零迁移
+    // 自定义解码：旧版 JSON 不含 provider/color 字段时分别默认为 .claude 与
+    // 按 id 稳定推导的颜色，确保旧账号数据零迁移、颜色跨启动保持一致
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -42,6 +44,8 @@ struct Account: Codable, Identifiable, Equatable {
         alias = try container.decodeIfPresent(String.self, forKey: .alias)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         provider = try container.decodeIfPresent(ProviderType.self, forKey: .provider) ?? .claude
+        color = try container.decodeIfPresent(AccountColor.self, forKey: .color)
+            ?? AccountColor.deterministicDefault(for: id)
     }
 
     // MARK: - Initialization
@@ -51,7 +55,8 @@ struct Account: Codable, Identifiable, Equatable {
         organizationId: String,
         organizationName: String,
         alias: String? = nil,
-        provider: ProviderType = .claude
+        provider: ProviderType = .claude,
+        color: AccountColor? = nil
     ) {
         self.id = UUID()
         self.sessionKey = sessionKey
@@ -60,6 +65,7 @@ struct Account: Codable, Identifiable, Equatable {
         self.alias = alias
         self.createdAt = Date()
         self.provider = provider
+        self.color = color ?? AccountColor.deterministicDefault(for: self.id)
     }
 
     init(
@@ -69,7 +75,8 @@ struct Account: Codable, Identifiable, Equatable {
         organizationName: String,
         alias: String?,
         createdAt: Date,
-        provider: ProviderType = .claude
+        provider: ProviderType = .claude,
+        color: AccountColor? = nil
     ) {
         self.id = id
         self.sessionKey = sessionKey
@@ -78,6 +85,7 @@ struct Account: Codable, Identifiable, Equatable {
         self.alias = alias
         self.createdAt = createdAt
         self.provider = provider
+        self.color = color ?? AccountColor.deterministicDefault(for: id)
     }
 
     // MARK: - Equatable

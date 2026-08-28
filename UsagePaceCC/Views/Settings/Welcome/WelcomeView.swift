@@ -668,6 +668,10 @@ struct HorizontalRadioGroup<T: Hashable>: View {
 struct MenuBarIconPreview: View {
     @ObservedObject private var settings = UserSettings.shared
 
+    /// 固定的预览账户 ID，确保预览图标的颜色在每次重新渲染（如 body 因设置变化重新求值）时保持稳定，
+    /// 而不是每次调用 `getPreviewIcon()` 时都生成新的随机 UUID 导致颜色随机跳变
+    private let previewAccountId = UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!
+
     var body: some View {
         // 模拟菜单栏背景
         HStack(spacing: 3) {
@@ -686,9 +690,26 @@ struct MenuBarIconPreview: View {
     private func getPreviewIcon() -> NSImage {
         let renderer = MenuBarIconRenderer(settings: settings)
         let mockData = createMockUsageData()
+        let mockSnapshot = createMockAccountSnapshot(from: mockData)
 
-        // 使用 createIcon 方法，这样会正确响应 iconDisplayMode
-        return renderer.createIcon(usageData: mockData, hasUpdate: false, button: nil)
+        // 使用 createIcon 方法，这样会正确响应 iconDisplayMode；
+        // 同时传入 claudeSnapshots，使预览与真实图标一致地渲染 5h/7d 账户组合图标
+        // （环 + 饼形扇区），而不是只有 Opus/Sonnet/Extra（P05 code review finding #2）
+        return renderer.createIcon(usageData: mockData, claudeSnapshots: [mockSnapshot], hasUpdate: false, button: nil)
+    }
+
+    /// 构造预览用的账户快照：复用 `createMockUsageData()` 的 5h/7d 百分比，
+    /// 确保账户组合图标预览与其余图标（Opus/Sonnet/Extra）显示同一个百分比
+    private func createMockAccountSnapshot(from mockData: UsageData) -> AccountUsageSnapshot {
+        return AccountUsageSnapshot(
+            accountId: previewAccountId,
+            provider: .claude,
+            displayName: "Preview",
+            color: AccountColor.deterministicDefault(for: previewAccountId),
+            fiveHour: mockData.fiveHour.map { WindowUsage(percentage: $0.percentage, resetsAt: $0.resetsAt, windowSeconds: nil) },
+            sevenDay: mockData.sevenDay.map { WindowUsage(percentage: $0.percentage, resetsAt: $0.resetsAt, windowSeconds: nil) },
+            errorMessage: nil
+        )
     }
 
     /// 创建模拟用量数据（66% 使用率）

@@ -253,6 +253,9 @@
 "codex_primary_limit" = "Codex 5時間制限";
 "codex_secondary_limit" = "Codex 7日制限";
 "codex_extra_usage" = "Codex 追加使用量";
+"codex_primary_limit_short" = "5h";
+"codex_secondary_limit_short" = "7d";
+"codex_limit_neutral_short" = "Codex";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5時間制限";
@@ -356,12 +359,6 @@
 "extra_usage.detail_credits_balance" = "%d クレジット";
 "extra_usage.detail_credits_remaining" = "残り %d クレジット";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "レインボーグラデーション";
-"loading_animation.dashed" = "破線回転";
-"loading_animation.pulse" = "パルス効果";
-"loading_animation.current" = "読み込みアニメーション: %@";
-
 // MARK: - Time Format
 "time_format.system" = "システムに従う";
 "time_format.twelve_hour" = "12時間制（午後 2:30）";
@@ -404,8 +401,10 @@
 "notification.description" = "いずれかの制限が90%%に達した時、または使用量がリセットされた時にシステム通知を送信します。";
 "notification.warning_title" = "使用量警告";
 "notification.warning_body" = "%@が%d%%の使用量に達しました";
+"notification.warning_body_with_account" = "%@ · %@が%d%%の使用量に達しました";
 "notification.reset_title" = "使用量リセット";
 "notification.reset_body" = "%@の使用量がリセットされました";
+"notification.reset_body_with_account" = "%@ · %@の使用量がリセットされました";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "Claude にサインイン";
@@ -427,13 +426,3 @@
 "account.codex_accounts" = "Codex アカウント";
 "account.add_codex_account" = "Codex アカウントを追加";
 "account.codex_current_account" = "現在の Codex アカウント";
-
-// MARK: - Graph Type
-"graph_type.circular" = "サークル";
-"graph_type.linear" = "ライン";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "グラフスタイル";
-"graph_style.hint" = "使用量の表示方法を選択";
-"graph_style.circular_description" = "使用量をパーセントリングで表示";
-"graph_style.linear_description" = "使用量をタイムラインとペース予測で表示";

@@ -548,56 +548,65 @@ struct AuthSettingsView: View {
             ? Color(red: 45/255.0, green: 212/255.0, blue: 191/255.0)
             : .blue
 
-        return Button(action: {
-            if provider == .codex {
-                settings.switchToCodexAccount(account)
-            } else {
-                settings.switchToAccount(account)
-            }
-        }) {
-            HStack(spacing: 12) {
-                // 选中状态指示器
-                Circle()
-                    .fill(isSelected ? accentColor : Color.clear)
-                    .frame(width: 8, height: 8)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
-                    )
+        let colorBinding = Binding<AccountColor>(
+            get: { account.color },
+            set: { settings.updateAccountColor(accountId: account.id, to: $0) }
+        )
 
-                // 账户信息
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(account.displayName)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
+        return HStack(spacing: 12) {
+            Button(action: {
+                if provider == .codex {
+                    settings.switchToCodexAccount(account)
+                } else {
+                    settings.switchToAccount(account)
+                }
+            }) {
+                HStack(spacing: 12) {
+                    // 选中状态指示器
+                    Circle()
+                        .fill(isSelected ? accentColor : Color.clear)
+                        .frame(width: 8, height: 8)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
+                        )
 
-                        if isSelected {
-                            Image(systemName: "checkmark")
+                    // 账户信息
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(account.displayName)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .font(.caption)
+                                    .foregroundColor(accentColor)
+                            }
+                        }
+
+                        if account.alias != nil && !account.alias!.isEmpty {
+                            Text(account.organizationName)
                                 .font(.caption)
-                                .foregroundColor(accentColor)
+                                .foregroundColor(.secondary)
                         }
                     }
 
-                    if account.alias != nil && !account.alias!.isEmpty {
-                        Text(account.organizationName)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    Spacer()
                 }
-
-                Spacer()
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? accentColor.opacity(0.1) : Color.clear)
-            )
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            AccountColorSwatchPicker(selection: colorBinding)
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? accentColor.opacity(0.1) : Color.clear)
+        )
     }
 
     // MARK: - Current Account Detail View

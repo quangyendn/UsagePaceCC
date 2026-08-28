@@ -71,8 +71,6 @@ enum L {
         static var refreshCooldown: String { localized("usage.refresh_cooldown") }
         static var runDiagnostic: String { localized("usage.run_diagnostic") }
         static var codexTitle: String { localized("usage.codex_title") }
-        static var codexCircularUnsupported: String { localized("usage.codex_circular_unsupported") }
-        static var switchToLinear: String { localized("usage.switch_to_linear") }
     }
     
     // MARK: - Settings Tabs
@@ -448,6 +446,21 @@ enum L {
                 return localized("codex_limit_neutral")
             }
         }
+
+        /// Short-form counterpart to `codexWindowName(windowSeconds:)` (e.g. "5h"/"7d" instead of
+        /// "Codex 5-Hour Limit"), used by the compact account-item legend row (P06 fix 4) which
+        /// already carries the account name and a leading percentage, leaving no room for the long form.
+        static func codexWindowNameShort(windowSeconds: TimeInterval?) -> String {
+            guard let windowSeconds else { return localized("codex_limit_neutral_short") }
+            let minutes = windowSeconds / 60
+            if minutes == 300 {
+                return localized("codex_primary_limit_short")
+            } else if minutes == 10080 {
+                return localized("codex_secondary_limit_short")
+            } else {
+                return localized("codex_limit_neutral_short")
+            }
+        }
     }
 
     // MARK: - Display Options (v2.0.0)
@@ -494,16 +507,6 @@ enum L {
 
         private static func displayCredits(_ balance: Double) -> Int {
             max(0, Int(balance.rounded(.down)))
-        }
-    }
-
-    // MARK: - Loading Animation
-    enum LoadingAnimation {
-        static var rainbow: String { localized("loading_animation.rainbow") }
-        static var dashed: String { localized("loading_animation.dashed") }
-        static var pulse: String { localized("loading_animation.pulse") }
-        static func current(_ name: String) -> String {
-            String(format: localized("loading_animation.current"), name)
         }
     }
 
@@ -560,9 +563,17 @@ enum L {
         static func warningBody(_ type: String, _ percentage: Int) -> String {
             String(format: localized("notification.warning_body"), type, percentage)
         }
+        /// 带账户名前缀的用量警告正文（P05 多账户场景，区分不同账户触发的通知）
+        static func warningBody(accountName: String, type: String, percentage: Int) -> String {
+            String(format: localized("notification.warning_body_with_account"), accountName, type, percentage)
+        }
         static var resetTitle: String { localized("notification.reset_title") }
         static func resetBody(_ type: String) -> String {
             String(format: localized("notification.reset_body"), type)
+        }
+        /// 带账户名前缀的用量重置正文（P05 多账户场景，区分不同账户触发的通知）
+        static func resetBody(accountName: String, type: String) -> String {
+            String(format: localized("notification.reset_body_with_account"), accountName, type)
         }
     }
 
@@ -572,20 +583,6 @@ enum L {
         static var hint: String { localized("settings.general.time_format_hint") }
         static var preview: String { localized("settings.general.time_format_preview") }
     }
-    // MARK: - Graph Type
-    enum GraphType {
-        static var circular: String { localized("graph_type.circular") }
-        static var linear: String { localized("graph_type.linear") }
-    }
-
-    // MARK: - Graph Style Settings
-    enum GraphStyle {
-        static var title: String { localized("graph_style.title") }
-        static var hint: String { localized("graph_style.hint") }
-        static var circularDescription: String { localized("graph_style.circular_description") }
-        static var linearDescription: String { localized("graph_style.linear_description") }
-    }
-
     // MARK: - Helper Methods
     
     /// 本地化字符串辅助方法

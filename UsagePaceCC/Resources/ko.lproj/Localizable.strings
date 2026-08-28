@@ -253,6 +253,9 @@
 "codex_primary_limit" = "Codex 5시간 제한";
 "codex_secondary_limit" = "Codex 7일 제한";
 "codex_extra_usage" = "Codex 추가 사용량";
+"codex_primary_limit_short" = "5h";
+"codex_secondary_limit_short" = "7d";
+"codex_limit_neutral_short" = "Codex";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5시간 제한";
@@ -354,12 +357,6 @@
 "extra_usage.detail_credits_balance" = "%d 크레딧";
 "extra_usage.detail_credits_remaining" = "%d 크레딧 남음";
 
-// MARK: - Loading Animation
-"loading_animation.rainbow" = "무지개 그라데이션";
-"loading_animation.dashed" = "점선 회전";
-"loading_animation.pulse" = "펄스 효과";
-"loading_animation.current" = "로딩 애니메이션: %@";
-
 // MARK: - Time Format
 "time_format.system" = "시스템 설정 따르기";
 "time_format.twelve_hour" = "12시간제 (오후 2:30)";
@@ -402,8 +399,10 @@
 "notification.description" = "제한이 90%%에 도달하거나 사용량이 재설정될 때 시스템 알림을 보냅니다.";
 "notification.warning_title" = "사용량 경고";
 "notification.warning_body" = "%@이(가) %d%% 사용량에 도달했습니다";
+"notification.warning_body_with_account" = "%@ · %@이(가) %d%% 사용량에 도달했습니다";
 "notification.reset_title" = "사용량 재설정";
 "notification.reset_body" = "%@ 사용량이 재설정되었습니다";
+"notification.reset_body_with_account" = "%@ · %@ 사용량이 재설정되었습니다";
 
 // MARK: - Web Login (v2.2.0)
 "weblogin.window_title" = "Claude 로그인";
@@ -425,13 +424,3 @@
 "account.codex_accounts" = "Codex 계정";
 "account.add_codex_account" = "Codex 계정 추가";
 "account.codex_current_account" = "현재 Codex 계정";
-
-// MARK: - Graph Type
-"graph_type.circular" = "원형";
-"graph_type.linear" = "선형";
-
-// MARK: - Graph Style Settings
-"graph_style.title" = "그래프 스타일";
-"graph_style.hint" = "사용량 표시 방식 선택";
-"graph_style.circular_description" = "사용량을 퍼센트 링으로 표시";
-"graph_style.linear_description" = "사용량을 타임라인과 속도 예측으로 표시";

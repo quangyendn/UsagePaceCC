@@ -90,10 +90,12 @@ ClaudeUsageMonitor
 *.bak
 *.backup
 
-.claude
 
 # Local agent tooling
-.serena/
+.claude
 .codex/
+.serena/
+
 # Planning artifacts (local only)
 plans/
+docs/superpowers/
