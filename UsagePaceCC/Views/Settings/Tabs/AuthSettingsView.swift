@@ -1127,6 +1127,9 @@ struct AuthSettingsView: View {
         AntigravityTokenProvider.shared.connectKeychain { result in
             switch result {
             case .success:
+                // 伪账户的可见性跟着这一位走——connect 成功之前它永远不会被拉取，
+                // 因此在此之前不该出现在任何账户列表里（见 `antigravityKeychainConnected`）。
+                settings.setAntigravityKeychainConnected(true)
                 settings.recordAntigravityKeychainError(nil)
                 NotificationCenter.default.post(
                     name: .accountChanged,
@@ -1135,6 +1138,7 @@ struct AuthSettingsView: View {
                 )
             case .failure(let error):
                 antigravityKeychainConnectTapped = false
+                settings.setAntigravityKeychainConnected(false)
                 settings.recordAntigravityKeychainError(AntigravitySourceError(source: .keychain, underlying: error))
             }
         }

@@ -45,7 +45,7 @@ class MenuBarIconRenderer {
         usageData: UsageData?,
         codexUsageData: CodexUsageData? = nil,
         claudeSnapshots: [AccountUsageSnapshot] = [],
-        antigravityUsageData: AntigravityUsageData? = nil,
+        antigravitySnapshots: [AccountUsageSnapshot] = [],
         hasAntigravityPrimary: Bool = false,
         hasAntigravitySecondary: Bool = false,
         hasUpdate: Bool,
@@ -64,10 +64,13 @@ class MenuBarIconRenderer {
         let hasCodex = codexUsageData != nil
         // 自定义模式下的 0% 占位快照会在这里被注入；`hasAntigravity` 必须建立在占位注入之后，
         // 否则「刚添加账户、尚未拉到数据」这一帧会被误判为「未配置」，图标短暂消失。
-        // `antigravityUsageData` 是 `settings.currentAntigravityAccountId` 对应的那一份
-        // （由 `MenuBarManager` 从 `antigravityUsageByAccount` 查出并传入——
-        // 没有跨账户合并的单值可用，菜单栏字形只反映当前选中账户，与账户子菜单切换保持一致）。
-        let antigravityRenderSnapshots = antigravityGlyphSnapshots(from: antigravityUsageData)
+        // Antigravity 与 Claude 一样是多账户：字形从**全部**账户快照里按紧迫度选出最多 2 个
+        // （`createAccountGlyphIcons` → `topUrgentAccounts`），不再只看
+        // `settings.currentAntigravityAccountId` 选中的那一个——选中账户完全可能是一个
+        // 永远不会被拉取的来源（例如未连接的 Keychain 伪账户，见
+        // `DataRefreshManager.antigravityAccountsToFetch`），那样菜单栏会整组消失，
+        // 而弹窗里其它账户的数据却好端端地显示着。
+        let antigravityRenderSnapshots = antigravityGlyphSnapshots(from: antigravitySnapshots)
         let hasAntigravity = !antigravityRenderSnapshots.isEmpty
 
         // 三个 Provider 都没有可渲染内容时，保留旧有的默认图标兜底路径（未配置任何账号，
@@ -338,27 +341,18 @@ class MenuBarIconRenderer {
         return createAccountGlyphIcons(from: snapshots, showFiveHour: showPrimary, showSevenDay: showSecondary, button: button, isMonochrome: isMonochrome)
     }
 
-    /// 把「当前选中账户的那一份 `AntigravityUsageData`」包装成账户组合图标所需的 snapshot 数组
-    /// —— 与 `codexGlyphSnapshots` 同一形状（`DataRefreshManager` 没有导出跨账户合并的单值
-    /// `antigravityUsageData` 属性；菜单栏字形只反映
-    /// `settings.currentAntigravityAccountId` 选中的那个账户，与账户子菜单切换保持一致）。
-    /// `showPlaceholder`（自定义模式下账户尚无数据时）与
-    /// `codexGlyphSnapshots` 的占位行为一致。
-    private func antigravityGlyphSnapshots(from usage: AntigravityUsageData?) -> [AccountUsageSnapshot] {
-        let account = settings.currentAntigravityAccount
-        if let account, let snapshot = AccountUsageSnapshot.antigravitySnapshot(from: usage, account: account) {
-            return [snapshot]
-        }
-        // `account == nil` 意味着**没有任何** Antigravity 账户——这与 Codex 的等价占位路径不同：
-        // `codexGlyphSnapshots` 只能从 `buildCodexIcons` 内部到达，调用方早已保证
-        // `codexUsageData != nil`（也就是至少有一个 Codex 账户）；这里的 `antigravityGlyphSnapshots`
-        // 却是从 `createIcon` 顶层无条件调用的，用来计算 `hasAntigravity`。此前只要
-        // `displayMode == .custom` 就无条件伪造一个 0% 占位 snapshot，会让完全没有配置
-        // Antigravity 的用户在 Claude 数据尚未加载（启动瞬间）或持续报错、且没有 Codex 时，
-        // `hasAntigravity` 恒为 true，图标从旧的 22×22 0% 进度环兜底退化成 18×18 的
-        // `createSimpleCircleIcon()`。占位 snapshot 必须仅在
-        // "确实存在至少一个 Antigravity 账户，只是这个账户还没有可渲染的数据"时才出现。
-        guard let account, settings.displayMode == .custom else { return [] }
+    /// 把 Antigravity 多账户快照转成菜单栏字形所需的数组。
+    /// - Note: 与 Claude 的 `claudeSnapshots` 同一形状——传进来的就是
+    ///   `DataRefreshManager.antigravitySnapshots`（全部账户），实际画几个由
+    ///   `createAccountGlyphIcons` 的 `topUrgentAccounts(limit: 2)` 决定。
+    /// - Note: 占位快照只在 `.custom` 模式、且确实存在至少一个 Antigravity 账户但还没有任何
+    ///   快照时才生成（账户刚添加、首次拉取尚未返回）。完全没有配置 Antigravity 的用户绝不能
+    ///   走到这里造出占位快照——`hasAntigravity` 由本方法的返回值推导，恒为 true 会让图标从
+    ///   22×22 的 0% 兜底进度环退化成 18×18 的 `createSimpleCircleIcon()`。
+    private func antigravityGlyphSnapshots(from snapshots: [AccountUsageSnapshot]) -> [AccountUsageSnapshot] {
+        if !snapshots.isEmpty { return snapshots }
+        guard settings.displayMode == .custom,
+              let account = settings.currentAntigravityAccount else { return [] }
         return [AccountUsageSnapshot(
             accountId: account.id,
             provider: .antigravity,

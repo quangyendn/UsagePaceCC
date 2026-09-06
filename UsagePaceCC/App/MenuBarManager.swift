@@ -138,15 +138,13 @@ class MenuBarManager: ObservableObject {
         dataManager.$claudeSnapshots
             .assign(to: &$claudeSnapshots)
 
+        // Antigravity 的菜单栏字形由**全部**账户快照驱动（同 Claude），所以订阅
+        // `antigravitySnapshots` 本身并在这里先落到本地属性再重绘——`@Published` 的
+        // sink 在 `willSet` 时触发，此刻 `dataManager.antigravitySnapshots` 仍是旧值，
+        // 必须用闭包收到的新值，否则每次重绘都比数据慢一拍。
         dataManager.$antigravitySnapshots
-            .assign(to: &$antigravitySnapshots)
-
-        // Antigravity 是多账户，`updateMenuBarIcon()` 只读"当前选中账户"那一份数据
-        // （见 `MenuBarUI.updateMenuBarIcon`），因此这里需要在 `antigravityUsageByAccount`
-        // 任一账户的数据更新时都重绘一次——不止是选中账户变化时（同 `usageData`/`codexUsageData`
-        // 的既有订阅方式，保持一致）。
-        dataManager.$antigravityUsageByAccount
-            .sink { [weak self] _ in
+            .sink { [weak self] snapshots in
+                self?.antigravitySnapshots = snapshots
                 self?.updateMenuBarIcon()
             }
             .store(in: &cancellables)
@@ -165,10 +163,10 @@ class MenuBarManager: ObservableObject {
     /// 取代原先合成一个 nondeterministic `AntigravityUsageData` 代表值的做法；真正的多账户
     /// 渲染数据始终走 `antigravitySnapshots`，不受这两个布尔影响。
     var hasAntigravityPrimary: Bool {
-        dataManager.antigravitySnapshots.contains { $0.fiveHour != nil }
+        antigravitySnapshots.contains { $0.fiveHour != nil }
     }
     var hasAntigravitySecondary: Bool {
-        dataManager.antigravitySnapshots.contains { $0.sevenDay != nil }
+        antigravitySnapshots.contains { $0.sevenDay != nil }
     }
     
     /// 处理菜单栏图标点击事件
@@ -433,7 +431,7 @@ class MenuBarManager: ObservableObject {
             codexAccount: settings.currentCodexAccount,
             hasAntigravityPrimary: hasAntigravityPrimary,
             hasAntigravitySecondary: hasAntigravitySecondary,
-            antigravitySnapshots: dataManager.antigravitySnapshots,
+            antigravitySnapshots: antigravitySnapshots,
             antigravityErrorMessage: dataManager.antigravityProviderErrorMessage
         )
         return NSSize(width: PopoverLayout.width, height: PopoverLayout.height(rowCount: rowCount))
@@ -629,10 +627,7 @@ class MenuBarManager: ObservableObject {
             usageData: usageData,
             codexUsageData: codexUsageData,
             claudeSnapshots: claudeSnapshots,
-            // `?? UUID()` 每次都会分配一个全新、恒定查不到的随机 key——
-            // `flatMap` 让 `currentAntigravityAccountId == nil` 时直接短路成 nil，不必造一个
-            // 注定 miss 的字典查询。
-            antigravityUsageData: settings.currentAntigravityAccountId.flatMap { dataManager.antigravityUsageByAccount[$0] },
+            antigravitySnapshots: antigravitySnapshots,
             hasAntigravityPrimary: hasAntigravityPrimary,
             hasAntigravitySecondary: hasAntigravitySecondary,
             hasUpdate: hasAvailableUpdate,
