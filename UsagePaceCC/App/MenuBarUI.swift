@@ -551,20 +551,20 @@ class MenuBarUI {
     /// - Parameters:
     ///   - usageData: Claude 用量数据
     ///   - codexUsageData: Codex 用量数据
-    ///   - antigravityUsageData: **当前选中** Antigravity 账户（`settings.currentAntigravityAccountId`）
-    ///     的用量数据，镜像既有的 `codexUsageData` 参数——`DataRefreshManager` 没有导出跨账户
-    ///     合并的单值属性（见 phase-03 实现笔记），菜单栏字形只反映选中账户，切换账户子菜单
-    ///     会连带切换菜单栏图标。
+    ///   - antigravitySnapshots: **全部** Antigravity 账户的用量快照，形状同 `claudeSnapshots`；
+    ///     菜单栏字形由 `topUrgentAccounts(limit: 2)` 从中选出，不再只反映
+    ///     `settings.currentAntigravityAccountId` 选中的那一个（选中账户可能是一个永远不会被
+    ///     拉取的来源，例如未连接的 Keychain 伪账户，那样整组字形会凭空消失）。
     ///   - hasAntigravityPrimary/hasAntigravitySecondary: 跨**全部** Antigravity 账户合并的
-    ///     "该槽位是否存在数据"布尔（供 `getActiveDisplayTypes` 判断类型是否应出现在智能/自定义
-    ///     列表里），与上面"只看选中账户"的 `antigravityUsageData` 是两件不同的事，不要混用。
+    ///     "该槽位是否存在数据"布尔，供 `getActiveDisplayTypes` 判断类型是否应出现在智能/自定义
+    ///     列表里。
     ///   - hasUpdate: 是否有可用更新
     ///   - shouldShowBadge: 是否显示更新徽章
     func updateMenuBarIcon(
         usageData: UsageData?,
         codexUsageData: CodexUsageData? = nil,
         claudeSnapshots: [AccountUsageSnapshot] = [],
-        antigravityUsageData: AntigravityUsageData? = nil,
+        antigravitySnapshots: [AccountUsageSnapshot] = [],
         hasAntigravityPrimary: Bool = false,
         hasAntigravitySecondary: Bool = false,
         hasUpdate: Bool,
@@ -580,7 +580,7 @@ class MenuBarUI {
             usageData: usageData,
             codexUsageData: codexUsageData,
             claudeSnapshots: claudeSnapshots,
-            antigravityUsageData: antigravityUsageData,
+            antigravitySnapshots: antigravitySnapshots,
             hasAntigravityPrimary: hasAntigravityPrimary,
             hasAntigravitySecondary: hasAntigravitySecondary,
             hasUpdate: showBadge
@@ -597,7 +597,7 @@ class MenuBarUI {
             usageData: usageData,
             codexUsageData: codexUsageData,
             claudeSnapshots: claudeSnapshots,
-            antigravityUsageData: antigravityUsageData,
+            antigravitySnapshots: antigravitySnapshots,
             hasAntigravityPrimary: hasAntigravityPrimary,
             hasAntigravitySecondary: hasAntigravitySecondary,
             hasUpdate: showBadge,
@@ -627,7 +627,7 @@ class MenuBarUI {
     ///     反映到缓存键中，否则会返回过期的图标组合（陈旧账户/颜色/百分比）。
     ///   - hasUpdate: 是否有更新徽章
     /// - Returns: 缓存键字符串
-    private func generateCacheKey(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], antigravityUsageData: AntigravityUsageData? = nil, hasAntigravityPrimary: Bool = false, hasAntigravitySecondary: Bool = false, hasUpdate: Bool) -> String {
+    private func generateCacheKey(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], antigravitySnapshots: [AccountUsageSnapshot] = [], hasAntigravityPrimary: Bool = false, hasAntigravitySecondary: Bool = false, hasUpdate: Bool) -> String {
         let isMulti = settings.isMultiProviderActive
         let accountsFingerprint = topUrgentAccounts(from: claudeSnapshots, limit: 2)
             .map { snapshot -> String in
@@ -637,25 +637,19 @@ class MenuBarUI {
             }
             .joined(separator: "|")
 
-        // Antigravity 只反映**当前选中账户**（同 Codex 的 `_cxp`/`_cxs` 约定），而不是像 Claude
-        // 那样跨账户取 `topUrgentAccounts`——`DataRefreshManager` 没有导出跨账户合并的单值属性。
-        // 显式带上选中账户 id：即使 `antigravityUsageData` 恰好没变
-        // （例如两个账户都是 nil），切换选中账户也必须让缓存键跟着变，否则账户子菜单切换后
-        // 菜单栏图标（账户颜色/占位显示名）不会重绘。
-        // `hasAntigravityPrimary`/`hasAntigravitySecondary` 是跨**全部**账户合并的布尔，驱动
-        // `getActiveDisplayTypes` 决定 Antigravity 的类型是否出现在智能/自定义列表里——账户 B
-        // 新增一个 secondary 数据桶会翻转这两个布尔，进而改变账户 A 在菜单栏上实际渲染的字形
-        // （是否显示 7d 扇区），即使账户 A 自己的 `_agp`/`_ags`/`_agcur` 三项都没变化。此前缓存键
-        // 没有带上这两个布尔，账户 B 的这类变化会被判定为"命中缓存"而不重绘，账户 A 的图标
-        // 停留在陈旧状态（对照 Codex `_cxp`/`_cxs` 同一角色的既有惯例——
-        // Codex 目前仍是单账户，尚未暴露出这个坑）。
-        var antigravityKey = "_agcur\(settings.currentAntigravityAccountId?.uuidString ?? "none")_agHasP\(hasAntigravityPrimary)_agHasS\(hasAntigravitySecondary)"
-        if let ag = antigravityUsageData {
-            if let p = ag.primary { antigravityKey += "_agp\(Int(p.usagePercentage))" } else { antigravityKey += "_agpnil" }
-            if let s = ag.secondary { antigravityKey += "_ags\(Int(s.usagePercentage))" } else { antigravityKey += "_agsnil" }
-        } else {
-            antigravityKey += "_agnil"
-        }
+        // Antigravity 的指纹与 `accountsFingerprint` 同一形状：菜单栏字形由 `topUrgentAccounts`
+        // 从**全部**账户快照里选出，任一账户的百分比/颜色/成员变化都必须让缓存键跟着变，
+        // 否则会命中过期图标。
+        // `hasAntigravityPrimary`/`hasAntigravitySecondary` 驱动 `getActiveDisplayTypes` 决定
+        // Antigravity 的类型是否出现在智能/自定义列表里（即是否渲染 7d 扇区），同样要入键。
+        let antigravityFingerprint = topUrgentAccounts(from: antigravitySnapshots, limit: 2)
+            .map { snapshot -> String in
+                let primary = snapshot.fiveHour.map { "\(Int($0.percentage))" } ?? "nil"
+                let secondary = snapshot.sevenDay.map { "\(Int($0.percentage))" } ?? "nil"
+                return "\(snapshot.accountId.uuidString):\(snapshot.color.rawValue):\(primary):\(secondary)"
+            }
+            .joined(separator: "|")
+        let antigravityKey = "_agHasP\(hasAntigravityPrimary)_agHasS\(hasAntigravitySecondary)_ag[\(antigravityFingerprint)]"
 
         guard let data = usageData else {
             var key = "no_data_\(settings.iconDisplayMode.rawValue)_\(settings.iconStyleMode.rawValue)_\(settings.displayMode.rawValue)_mp\(isMulti)"

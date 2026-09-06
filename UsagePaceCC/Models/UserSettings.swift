@@ -933,6 +933,25 @@ class UserSettings: ObservableObject {
     /// 钥匙串里是否存在 agy 的凭据条目（属性探测，不读数据，不弹 ACL 授权框）
     @Published private(set) var antigravityKeychainDetected: Bool = false
 
+    /// Keychain 来源当前是否**真的可用**——即 `AntigravityTokenProvider.connectKeychain(_:)`
+    /// 已经成功过一次并把凭据留在内存里。
+    /// - Important: 这份内存凭据不跨进程存活，所以每次启动 App 都从 false 开始，直到用户在 Auth
+    ///   页点一次 Connect。它与 `antigravityKeychainEnabled`（一次性 opt-in，持久化）是两件事：
+    ///   opt-in 只是"允许读"，connected 才是"读到了"。
+    /// - Note: 存在的理由是 Keychain 伪账户的可见性必须跟它走——未 connected 时该伪账户永远不会
+    ///   被 `DataRefreshManager.antigravityAccountsToFetch` 拉取，留在 `antigravityAccounts` 里就
+    ///   是一行永远没有数据的死账户：占据账户切换子菜单、Auth 页账户列表，甚至会被选成
+    ///   `currentAntigravityAccountId`。
+    @Published private(set) var antigravityKeychainConnected: Bool = false
+
+    /// 由 `AuthSettingsView` 的 Connect/Reconnect 回调调用（`connectKeychain(_:)` 唯一的调用点），
+    /// 成功传 true、失败传 false；内部顺带重新物化/摘除 Keychain 伪账户。
+    func setAntigravityKeychainConnected(_ connected: Bool) {
+        guard antigravityKeychainConnected != connected else { return }
+        antigravityKeychainConnected = connected
+        syncAntigravityKeychainAccountVisibility()
+    }
+
     /// 用户是否**显式**同意本 App 读取 agy 的钥匙串凭据；语义与 `codexCLIEnabled` 一致，
     /// 且更严格——未启用前连钥匙串「数据」都不读（只读属性），不发任何网络请求。
     @Published private(set) var antigravityKeychainEnabled: Bool {
@@ -1325,6 +1344,8 @@ class UserSettings: ObservableObject {
             antigravityKeychainConsentedIdentityHash = nil
             antigravityKeychainResolvedEmail = nil
             antigravityKeychainAccountChanged = false
+            // 关掉 opt-in 等于收回"允许读"，内存里那份 connect 结果也随之作废。
+            antigravityKeychainConnected = false
             syncAntigravityKeychainAccountVisibility()
         }
 
@@ -1350,6 +1371,7 @@ class UserSettings: ObservableObject {
             antigravityKeychainConsentedIdentityHash = nil
             antigravityKeychainResolvedEmail = nil
             antigravityKeychainAccountChanged = false
+            antigravityKeychainConnected = false
             Logger.settings.notice("Antigravity Keychain 凭据已消失，自动撤回 opt-in（OAuth 账户不受影响）")
         }
 
@@ -1384,7 +1406,12 @@ class UserSettings: ObservableObject {
     ///   不留一个不会被拉取、却仍会被 `hasAnyAntigravitySource` 计入的僵尸条目。
     /// - Important: 每次改变 `antigravityAccounts` 后都会调用 `normalizeAntigravityCurrentAccountId()`。
     private func syncAntigravityKeychainAccountVisibility() {
-        let shouldExist = hasAntigravityKeychainSource && !isAntigravityKeychainAccountRedundant
+        // `antigravityKeychainConnected` 是第三个条件：opt-in 了、凭据条目也在，但用户还没点过
+        // Connect 时，这个来源一次也不会被拉取，伪账户必须不存在——否则它就是一行永远 0 数据的
+        // 死账户（见 `antigravityKeychainConnected` 的注释）。
+        let shouldExist = hasAntigravityKeychainSource
+            && antigravityKeychainConnected
+            && !isAntigravityKeychainAccountRedundant
         let existingIndex = antigravityAccounts.firstIndex { $0.id == Self.antigravityKeychainAccountId }
 
         if shouldExist {
