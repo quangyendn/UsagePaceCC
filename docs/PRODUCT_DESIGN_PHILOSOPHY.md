@@ -22,21 +22,23 @@ UI shape is determined by the user's actual account state, not by feature flags.
 
 ### 2.2 Provider Equality
 
-Once the user enters multi-provider state, Claude and Codex are **two equal providers** with no hierarchy. Neither Codex is deliberately downplayed nor Claude deliberately elevated.
+Once the user enters multi-provider state, Claude, Codex and Antigravity are **equal providers** with no hierarchy. No provider is deliberately downplayed or elevated relative to the others.
 
 - Equal visual weight
 - Equal naming, color, and icon recognizability
 - Equal account management entry points in the settings panel
 - Equal data refresh priority
 
-### 2.3 No Extensibility Reserved for Extensibility's Sake
+### 2.3 A Small, Closed Set of Providers — Not an Extension Point
 
-The product hard-limits itself to Claude + Codex as a deliberate design constraint.
+The product supports Claude, Codex and Antigravity. That set is closed and expressed as a Swift enum, not as configuration.
 
-- This tool is built for the class of users who "use both Claude and Codex simultaneously"
-- Adding Gemini / Cursor / Copilot etc. would break the product form (three-column popover, three groups of menu bar icons — neither is elegant)
-- When someone requests a third provider, the honest answer is "this is an intentional design trade-off"
-- A clear boundary is worth more than unlimited promises
+- The constraint was never the number two. It is: **a small, closed set of providers the author uses daily, each rendered as a first-class peer.** A provider earns a slot by being in the author's daily workflow, not by being requested.
+- What remains banned, unchanged: generic `[String: ProviderConfig]` registries, plugin layers, "add your own provider" configuration. Every provider is an explicit enum case with explicit branches, so the compiler enumerates the work when the set changes.
+- The cost of each addition is real and visible — every exhaustive `switch` in the app, six locales, a menu bar glyph budget, and in Antigravity's case a second credential source and an OAuth flow. That cost is the gate.
+- When someone requests a fourth provider, the honest answer is still "probably no", for the same reason as before.
+
+> **Amended 2026-09:** this section originally read "the product hard-limits itself to Claude + Codex" and asserted a two-provider cap. Antigravity was added because it became part of the author's daily workflow and fit the existing account-driven rendering path (`UsageProvider` protocol, per-account snapshots, dual-source arbitration already proven by Codex) without a new abstraction. The prohibition on a generic provider registry did not change — only the number did. This note exists so the amendment reads as a recorded decision, not a silently redrawn boundary.
 
 ## 3. Boundaries of Design Decisions
 
@@ -53,12 +55,12 @@ The product hard-limits itself to Claude + Codex as a deliberate design constrai
 
 ## 4. Honest External Positioning
 
-The first sentence of the README cannot pretend this is a "universal multi-AI tool", but also cannot pretend there is no Codex support.
+The first sentence of the README cannot pretend this is a "universal multi-AI tool", but also cannot pretend there is no Codex or Antigravity support.
 
 Reference phrasing:
 > Track your Claude (and optional Codex) subscription quota — beautifully, in your menu bar.
 
-Codex's placement should be in the subtitle/Features section rather than the hero image, consistent with the true product state of "author's personal need + nice to have".
+Codex's and Antigravity's placement should be in the subtitle/Features section rather than the hero image, consistent with the true product state of "author's personal need + nice to have". The hero line stays Claude-first even as the provider set grows — a peer provider earning equal treatment inside the app is not the same as earning the first sentence of the pitch.
 
 ## 5. Technical Decisions Derived from Philosophy
 
@@ -69,4 +71,8 @@ The following technical choices are not engineering preferences — they are ext
 | Claude-only users have zero awareness | Don't change Bundle ID, repo name, product name, or user data |
 | State-driven UI | Popover width, menu bar icon grouping derived from `accounts.contains(where: provider == .codex)` |
 | Provider equality | Abstract `UsageProvider` protocol; `Account` model with `provider` field; Claude doesn't "hold primary position" in code |
-| Stopping at two providers | Don't introduce generic `[String: ProviderConfig]`; use enum to explicitly express "only these two" |
+| A small, closed provider set | Don't introduce generic `[String: ProviderConfig]`; use an enum to explicitly express the closed set |
+
+## 6. Revision History
+
+- **2026-09**: Added Antigravity as a third provider. §2.2 (Provider Equality) extended from two to three providers. §2.3 rewritten — the boundary was never literally "two"; it was always "a small, closed set of providers the author uses daily, each a first-class peer," and that is what is now written down. The registry/plugin-layer prohibition is unchanged. §4 and the §5 table row updated to match. See `docs/ANTIGRAVITY_INTEGRATION.md` for the technical detail behind this addition.

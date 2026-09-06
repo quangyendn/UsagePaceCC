@@ -162,6 +162,10 @@ enum LimitType: String, CaseIterable, Codable {
     case codexSecondary = "codex_secondary"
     /// Codex Extra Usage / credits
     case codexExtraUsage = "codex_extra_usage"
+    /// Antigravity 主窗口（拍平后的 bucket 0）
+    case antigravityPrimary = "antigravity_primary"
+    /// Antigravity 次窗口（拍平后的 bucket 1）
+    case antigravitySecondary = "antigravity_secondary"
 
     /// 所属 Provider
     var provider: ProviderType {
@@ -170,12 +174,15 @@ enum LimitType: String, CaseIterable, Codable {
             return .claude
         case .codexPrimary, .codexSecondary, .codexExtraUsage:
             return .codex
+        case .antigravityPrimary, .antigravitySecondary:
+            return .antigravity
         }
     }
 
-    /// 是否为圆形图标（5小时、7天和 Codex 两项）
+    /// 是否为圆形图标（5小时、7天、Codex 与 Antigravity 两项窗口）
     var isCircular: Bool {
         return self == .fiveHour || self == .sevenDay || self == .codexPrimary || self == .codexSecondary
+            || self == .antigravityPrimary || self == .antigravitySecondary
     }
 
     /// 是否为矩形图标（Opus和Sonnet）
@@ -190,7 +197,7 @@ enum LimitType: String, CaseIterable, Codable {
 
     /// 是否使用虚线样式（7天类型）
     var usesDashedStyle: Bool {
-        return self == .sevenDay || self == .codexSecondary
+        return self == .sevenDay || self == .codexSecondary || self == .antigravitySecondary
     }
 
     /// 显示名称
@@ -212,6 +219,11 @@ enum LimitType: String, CaseIterable, Codable {
             return L.LimitTypes.codexSecondary
         case .codexExtraUsage:
             return L.LimitTypes.codexExtraUsage
+        case .antigravityPrimary, .antigravitySecondary:
+            // Antigravity 的图例/菜单栏文案不经过 `LimitType.displayName`——走的是
+            // `AccountUsageSnapshot`/`AntigravityUsageData.Bucket` 自身的静态标签和
+            // `sourceLabel`，这里返回 rawValue 只是让枚举保持完整、可编译，不代表会被渲染。
+            return rawValue
         }
     }
 }
@@ -456,22 +468,41 @@ class UserSettings: ObservableObject {
         return codexAccounts.first { !$0.sessionKey.isEmpty }?.sessionKey ?? ""
     }
 
-    /// 是否同时存在 Claude 和 Codex 账户（决定 UI 进入 multi-provider 形态）
+    /// 当前处于「已配置」状态的 Provider 列表；决定 UI 是否进入多 Provider 形态。
+    /// - Important: 这里的顺序即菜单栏图标分组顺序（Claude → Codex → Antigravity），不要改动。
+    var activeProviders: [ProviderType] {
+        #if DEBUG
+        // DEBUG mock 模式下，没有任何真实账户时也要把三个 Provider 都算作"活跃"——
+        // 与 `shouldFetchClaudeUsage`/`shouldFetchCodexUsage`/`shouldFetchAntigravityUsage`
+        // 里 `debugModeEnabled || hasValid…Credentials` 的既有逃生舱同一理由：菜单栏图标渲染
+        // 依赖 `activeProviders` 来决定分组，若这里不放行，mock 模式下零真实账户就会得到空分组，
+        // 图标渲染回落到纯圆点，开发者用来预览图标样式的 mock 数据路径就此不可达。
+        if debugModeEnabled {
+            return [.claude, .codex, .antigravity]
+        }
+        #endif
+        var result: [ProviderType] = []
+        if !accounts.isEmpty { result.append(.claude) }
+        if hasAnyCodexSource { result.append(.codex) }
+        if hasAnyAntigravitySource { result.append(.antigravity) }
+        return result
+    }
+
+    /// 是否同时存在 ≥2 个已配置的 Provider（决定 UI 进入 multi-provider 形态）
     var isMultiProviderActive: Bool {
         #if DEBUG
         if debugModeEnabled {
             if displayMode == .custom {
-                let hasClaudeDisplayTypes = customDisplayTypes.contains { $0.provider == .claude }
-                let hasCodexDisplayTypes = customDisplayTypes.contains { $0.provider == .codex }
-                return hasClaudeDisplayTypes && hasCodexDisplayTypes
+                let providersWithDisplayTypes = Set(customDisplayTypes.map(\.provider))
+                return providersWithDisplayTypes.count >= 2
             }
             return true
         }
         #endif
-        return !accounts.isEmpty && hasAnyCodexSource
+        return activeProviders.count >= 2
     }
 
-    // MARK: - Codex 双来源仲裁（CLI / Browser，见 plan.md D9/D10/D11/D13）
+    // MARK: - Codex 双来源仲裁（CLI / Browser）
 
     /// 用户偏好的 Codex 凭据来源，持久化到 UserDefaults，默认 CLI
     @Published var codexSource: CodexSource {
@@ -535,7 +566,7 @@ class UserSettings: ObservableObject {
     ///   同意继续把新账户的 token 发出去。
     /// - Important: 这里只做相等性比对，原始 id 一点用处都没有，所以不落盘明文：
     ///   UserDefaults 是明文 plist，会进备份，任何以该用户身份运行的程序都读得到。
-    ///   plan.md phase-02 的 Security Considerations 只认可把这个 id **留在内存里**做 D12 比对。
+    ///   原始 id 只允许**留在内存里**做比对，落盘的只能是摘要。
     ///   不加盐——这不是口令材料，每安装一份盐还得跟摘要一起落盘，对已经能读 prefs 的攻击者毫无意义。
     ///   摘要与原始 id 一样，永不渲染、永不写日志。
     private var codexCLIConsentedAccountHash: String? {
@@ -854,6 +885,538 @@ class UserSettings: ObservableObject {
     func updateCodexBrowserChatGPTAccountId(fromAccessToken accessToken: String) {
         let authClaim = CodexCLIAuthReader.decodeJWTPayload(accessToken)?["https://api.openai.com/auth"] as? [String: Any]
         codexBrowserChatGPTAccountId = authClaim?["chatgpt_account_id"] as? String
+    }
+
+    // MARK: - Antigravity 双来源仲裁 + 多账户（Keychain ≈ Codex CLI，OAuth ≈ Claude 多账户）
+
+    /// Antigravity 账户列表（独立 Keychain key `accounts_antigravity`）。
+    /// - Important: `.oauth` 来源的账户可以有多个，每个账户的 refresh token 存在
+    ///   `Account.sessionKey` 里；`.keychain` 来源最多贡献 1 个账户，且该账户的
+    ///   `sessionKey` 恒为空（见 `Account.antigravitySource`）。
+    @Published var antigravityAccounts: [Account] = [] { didSet { saveAntigravityAccounts() } }
+
+    /// 当前选中的 Antigravity 账户 id，持久化到 UserDefaults（DEBUG 前缀同其它账户列表）
+    @Published var currentAntigravityAccountId: UUID? {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_currentAntigravityAccountId"
+            #else
+            let key = "currentAntigravityAccountId"
+            #endif
+            if let id = currentAntigravityAccountId {
+                defaults.set(id.uuidString, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+    }
+
+    /// 当前激活的 Antigravity 账户
+    var currentAntigravityAccount: Account? {
+        guard let id = currentAntigravityAccountId else { return antigravityAccounts.first }
+        return antigravityAccounts.first { $0.id == id } ?? antigravityAccounts.first
+    }
+
+    /// 用户偏好的 Antigravity 凭据来源；语义与 `codexSource` 一致，默认 `.oauth`
+    /// （Google 登录是推荐路径，Keychain 只是零配置的捷径）
+    @Published var preferredAntigravitySource: AntigravitySource {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_preferredAntigravitySource"
+            #else
+            let key = "preferredAntigravitySource"
+            #endif
+            defaults.set(preferredAntigravitySource.rawValue, forKey: key)
+        }
+    }
+
+    /// 钥匙串里是否存在 agy 的凭据条目（属性探测，不读数据，不弹 ACL 授权框）
+    @Published private(set) var antigravityKeychainDetected: Bool = false
+
+    /// 用户是否**显式**同意本 App 读取 agy 的钥匙串凭据；语义与 `codexCLIEnabled` 一致，
+    /// 且更严格——未启用前连钥匙串「数据」都不读（只读属性），不发任何网络请求。
+    @Published private(set) var antigravityKeychainEnabled: Bool {
+        didSet {
+            #if DEBUG
+            let key = "DEBUG_antigravityKeychainEnabled"
+            #else
+            let key = "antigravityKeychainEnabled"
+            #endif
+            defaults.set(antigravityKeychainEnabled, forKey: key)
+        }
+    }
+
+    #if DEBUG
+    private static let antigravityKeychainConsentedIdentityHashKey = "DEBUG_antigravityKeychainConsentedIdentityHash"
+    #else
+    private static let antigravityKeychainConsentedIdentityHashKey = "antigravityKeychainConsentedIdentityHash"
+    #endif
+
+    /// 用户 opt-in 后**首次成功解析**出的 Keychain 身份摘要（SHA-256 十六进制，同 `codexCLIConsentedAccountHash`
+    /// 的「只存摘要不存明文」理由）。Keychain 探测阶段只做属性探测、不读数据，因此拿不到身份，
+    /// 也就不能像 Codex CLI 那样在 opt-in 当时就绑定；改为在 `resolveAntigravityKeychainIdentity(_:_:)`
+    /// 首次拿到真实邮箱/`sub` 时补记一次。之后若这个 Keychain 条目对应的身份变了
+    /// （`agy logout && agy login <另一个账户>`），自动撤回 opt-in，而不是悄悄把新身份的 token 发出去。
+    private var antigravityKeychainConsentedIdentityHash: String? {
+        didSet {
+            defaults.set(antigravityKeychainConsentedIdentityHash, forKey: Self.antigravityKeychainConsentedIdentityHashKey)
+        }
+    }
+
+    /// 探测到的 Keychain 身份与用户当初同意的那个不一致，opt-in 已被自动撤回，等待用户重新确认
+    /// （语义对照 `codexCLIAccountChanged`）。
+    @Published private(set) var antigravityKeychainAccountChanged: Bool = false
+
+    #if DEBUG
+    private static let antigravityKeychainResolvedEmailKey = "DEBUG_antigravityKeychainResolvedEmail"
+    #else
+    private static let antigravityKeychainResolvedEmailKey = "antigravityKeychainResolvedEmail"
+    #endif
+
+    /// Keychain 来源已解析出的 Google 邮箱（已用 `normalizedAntigravityEmail` 归一化），独立于
+    /// Keychain 伪账户本身持久化——这是避免下面这段震荡的关键。
+    /// - Important: 此前 `isAntigravityKeychainAccountRedundant` 直接读伪账户自己的
+    ///   `organizationName`；一旦判定为多余，`syncAntigravityKeychainAccountVisibility()` 会把
+    ///   这个伪账户整条移除——移除的同时也抹掉了「它曾经是多余的」这一证据。下一次探测周期
+    ///   `hasAntigravityKeychainSource` 依旧为真，于是重新物化出一个 `organizationName ==
+    ///   "Antigravity"` 的占位符伪账户，被判定为"尚未解析、不算多余"，`antigravityAccountsToFetch`
+    ///   把它纳入拉取 → 多打一次配额请求 → 成功后重新解析出同一个邮箱 → 再次判定多余 → 再次移除
+    ///   → 如此往复，永不收敛，且每一轮都多打一次配额请求和一次 tokeninfo 请求。把解析结果存在
+    ///   这里、且伪账户被移除时绝不清空它，去重判定就不再依赖"这个账户当前是否还活着"，震荡随之
+    ///   消失。
+    private var antigravityKeychainResolvedEmail: String? {
+        didSet {
+            defaults.set(antigravityKeychainResolvedEmail, forKey: Self.antigravityKeychainResolvedEmailKey)
+        }
+    }
+
+    /// 最近一次 **Keychain 来源** 认证/传输失败的具体原因，供设置页展示（同 `codexCLIError`
+    /// 的角色）。OAuth 账户各自的失败已经在 `DataRefreshManager.antigravityErrorByAccount` 里
+    /// 逐账户记录，不经过这里——这里只反映 Keychain 这一个来源整体的状态。
+    /// - Important: 由 `recordAntigravityKeychainError(_:)` 赋值，不是一个只声明从不赋值的死属性。
+    @Published private(set) var antigravityError: AntigravitySourceError?
+
+    /// `DataRefreshManager` 合并 Keychain 来源拉取结果后调用：成功传 nil 清空，失败传具体错误。
+    func recordAntigravityKeychainError(_ error: AntigravitySourceError?) {
+        antigravityError = error
+    }
+
+    /// 逐账户的拉取错误短文案，供 Auth 页每一行 Antigravity 账户展示（`antigravityError` 只反映
+    /// **Keychain 这一个来源**整体的状态，覆盖不到"多个 OAuth 账户里恰好有一个持续失败"这种情况——
+    /// popover 的 provider 级错误行被设计成"全部账户失败才出现"，若 Settings 侧不单独逐账户展示，
+    /// 一个永久失败的账户会在任何地方都不可见。`AuthSettingsView` 没有
+    /// `DataRefreshManager` 的引用（零依赖构造是既有设计），镜像 `antigravityError` 的既有模式——
+    /// 由 `DataRefreshManager.mergeAntigravityResult` 在这里同步写一份，而不是新引入一条视图层
+    /// 依赖关系。
+    @Published private(set) var antigravityAccountErrors: [UUID: String] = [:]
+
+    /// `DataRefreshManager` 合并单个账户的拉取结果后调用：成功传 nil 清掉该账户的错误，
+    /// 失败传短文案（`AntigravitySourceError.errorDescription`）。
+    func recordAntigravityAccountError(_ message: String?, accountId: UUID) {
+        // 相等即跳过——否则每一轮成功拉取、每个账户都会无条件触发一次 `objectWillChange`，
+        // 让菜单栏图标、popover 与 Settings 一起失效重绘，即使这次赋的值和已存的完全一样。
+        guard antigravityAccountErrors[accountId] != message else { return }
+        antigravityAccountErrors[accountId] = message
+    }
+
+    /// 账户被移除/判定多余时调用，避免一个已经不存在的账户 id 继续占着 `antigravityAccountErrors`
+    /// 里的一条记录。
+    func clearAntigravityAccountError(accountId: UUID) {
+        antigravityAccountErrors.removeValue(forKey: accountId)
+    }
+
+    /// OAuth 账户存在即算一个可用来源，无需额外 opt-in —— 登录动作本身就是授权
+    var hasAntigravityOAuthAccounts: Bool {
+        antigravityAccounts.contains { $0.antigravitySource == .oauth }
+    }
+
+    /// Keychain 来源是否已配置 = 用户已显式启用 **且** 凭据条目存在
+    var hasAntigravityKeychainSource: Bool {
+        antigravityKeychainEnabled && antigravityKeychainDetected
+    }
+
+    /// 是否存在任意一个 Antigravity 凭据来源（existence gate，同 `hasAnyCodexSource` 的角色）
+    var hasAnyAntigravitySource: Bool { hasAntigravityOAuthAccounts || hasAntigravityKeychainSource }
+
+    /// Keychain 派生账户在 `antigravityAccounts` 里的稳定 id（agy 恒定单账户，无需按内容派生）。
+    /// - Important: 非 `private`——`DataRefreshManager` 需要它来判断某个即将失效的账户 id
+    ///   是 Keychain 伪账户还是某个 OAuth 账户，从而对 `AntigravityTokenProvider.invalidate`
+    ///   传入正确的 `source`。
+    static let antigravityKeychainAccountId = UUID(uuidString: "A9F9CA7E-0000-4000-8000-00000000AA61")!
+
+    /// 是否与某个 OAuth 账户重复：**只在双方邮箱都已解析且完全相同时**才判定为多余。
+    /// Keychain 身份要到第一次成功拉取、`resolveAntigravityKeychainIdentity(_:_:)` 写回真实邮箱
+    /// 之后才解析得到；解析出来之前一律不隐藏——宁可短暂重复显示两行，也绝不能悄悄丢掉一个账户的数据。
+    /// - Important: 读的是持久化的 `antigravityKeychainResolvedEmail`，**不是**
+    ///   `antigravityKeychainAccount?.organizationName`——伪账户被判定多余后会被整条移除，若这里
+    ///   继续读伪账户自身的字段，移除动作就会抹掉判定所依赖的唯一证据，导致下一次探测周期重新
+    ///   创建伪账户、判定为"尚未解析"、重新拉取一次配额、解析出同一个邮箱、再次判定多余、再次
+    ///   移除——每个周期都多打一次配额请求和一次 tokeninfo 请求，永不收敛。
+    var isAntigravityKeychainAccountRedundant: Bool {
+        guard let keychainEmail = antigravityKeychainResolvedEmail else { return false }
+        return antigravityAccounts.contains {
+            $0.antigravitySource == .oauth && Self.normalizedAntigravityEmail($0.organizationName) == keychainEmail
+        }
+    }
+
+    /// 把一个可能是占位符（例如尚未解析时的 `"Antigravity"`）的字符串标准化为可比对的邮箱 key；
+    /// 不含 `@` 一律视为「尚未解析出真实邮箱」，返回 nil，而不是参与比较导致误判重复。
+    private static func normalizedAntigravityEmail(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.contains("@") else { return nil }
+        return trimmed
+    }
+
+    /// Keychain 派生的 Antigravity 账户，供渲染层与 `antigravityAccounts` 里的 OAuth 账户一视同仁
+    /// 地遍历；`isAntigravityKeychainAccountRedundant` 为 true 时，`syncAntigravityKeychainAccountVisibility()`
+    /// 会把它整个从 `antigravityAccounts` 移除（不是留一个不被拉取的僵尸条目）。
+    var antigravityKeychainAccount: Account? {
+        antigravityAccounts.first { $0.id == Self.antigravityKeychainAccountId }
+    }
+
+    /// Antigravity 认证信息是否已配置（两个来源任一可用即可）
+    var hasValidAntigravityCredentials: Bool { hasAnyAntigravitySource }
+
+    /// 检测到 Keychain 凭据但用户尚未启用 —— Auth 页展示 opt-in 行的唯一条件
+    var isAntigravityKeychainOptInPending: Bool {
+        antigravityKeychainDetected && !antigravityKeychainEnabled
+    }
+
+    /// 当前生效的 Antigravity 来源（provider 级别仲裁，不是逐账户）；两个来源都未配置时为 nil
+    var effectiveAntigravitySource: AntigravitySource? {
+        if isAntigravitySourceConfigured(preferredAntigravitySource) { return preferredAntigravitySource }
+        if isAntigravitySourceConfigured(preferredAntigravitySource.other) { return preferredAntigravitySource.other }
+        return nil
+    }
+
+    /// `effectiveAntigravitySource` 是否因用户偏好的来源不可用而回退到另一个来源
+    var antigravitySourceIsFallback: Bool {
+        guard let effective = effectiveAntigravitySource else { return false }
+        return effective != preferredAntigravitySource
+    }
+
+    private func isAntigravitySourceConfigured(_ source: AntigravitySource) -> Bool {
+        switch source {
+        case .keychain: return hasAntigravityKeychainSource
+        case .oauth: return hasAntigravityOAuthAccounts
+        }
+    }
+
+    private func saveAntigravityAccounts() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            self.keychain.saveAntigravityAccounts(self.antigravityAccounts)
+        }
+    }
+
+    /// 新增（或更新）一个 OAuth 登录得到的 Antigravity 账户。
+    /// - Parameters:
+    ///   - refreshToken: 存进 `Account.sessionKey`，是这个账户唯一的持久化凭据
+    ///   - email: 用作 `organizationName`（展示用）
+    ///   - sub: Google 账户的稳定数字 id，用作 `organizationId`；缺失时退回 email
+    /// - Important: 按 email 去重——同一个 Google 身份若已经以 Keychain 来源出现，
+    ///   保留这个 OAuth 账户，Keychain 来源在展示层标记为多余并整条移除。
+    /// - Important: `email` 与 `sub` 若同时缺失/为空，**拒绝**这次登录——此前会退回一个随机
+    ///   `UUID` 同时当 `organizationId` 和展示名，不仅无法参与按邮箱去重，每次重新登录还会
+    ///   追加一个无法区分身份、彼此看起来毫无关联的新账户。
+    /// - Returns: 成功时返回新增/更新后的账户；`email` 与 `sub` 同时缺失时返回 `nil`，调用方
+    ///   （登录流程）应据此向用户展示"无法确认身份，登录已取消"。
+    func addAntigravityOAuthAccount(refreshToken: String, email: String?, sub: String?) -> Account? {
+        let trimmedSub = sub?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedEmail = email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hasSub = (trimmedSub?.isEmpty == false)
+        let hasEmail = (normalizedEmail?.isEmpty == false)
+        guard hasSub || hasEmail else {
+            Logger.settings.error("拒绝添加 Antigravity OAuth 账户：email 与 sub 均缺失，无法建立稳定身份")
+            return nil
+        }
+        let organizationId = (hasSub ? trimmedSub : nil) ?? normalizedEmail!
+        let organizationName = (email?.isEmpty == false ? email! : nil) ?? organizationId
+
+        if let normalizedEmail, !normalizedEmail.isEmpty,
+           let index = antigravityAccounts.firstIndex(where: {
+               $0.antigravitySource == .oauth
+                   && $0.organizationName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedEmail
+           }) {
+            antigravityAccounts[index].sessionKey = refreshToken
+            antigravityAccounts[index].organizationId = organizationId
+            antigravityAccounts[index].organizationName = organizationName
+            Logger.settings.notice("更新已存在的 Antigravity OAuth 账户: \(self.antigravityAccounts[index].displayName)")
+            syncAntigravityKeychainAccountVisibility()
+            postAccountChanged(provider: .antigravity)
+            return antigravityAccounts[index]
+        }
+
+        let wasFirstAntigravityAccount = antigravityAccounts.isEmpty
+        let newAccount = Account(
+            sessionKey: refreshToken,
+            organizationId: organizationId,
+            organizationName: organizationName,
+            provider: .antigravity
+        )
+        antigravityAccounts.append(newAccount)
+        if wasFirstAntigravityAccount {
+            ensureDefaultAntigravityDisplayTypesForCustomMode()
+        }
+        // 新增的 OAuth 账户若与某个已展示的 Keychain 伪账户撞邮箱，这里立即把后者摘掉，
+        // 同时把 `currentAntigravityAccountId` 归一化指向一个仍然存在的账户。
+        syncAntigravityKeychainAccountVisibility()
+        Logger.settings.notice("添加 Antigravity OAuth 账户: \(newAccount.displayName)")
+        postAccountChanged(provider: .antigravity)
+        return newAccount
+    }
+
+    /// 移除一个 Antigravity 账户（OAuth 或 Keychain 派生均可）。
+    /// - Important: 撤销 refresh token 是调用方（登录/退出按钮）的职责——尽力撤销后再调用这里
+    ///   做本地清理，本方法本身不发网络请求。
+    func removeAntigravityAccount(_ account: Account) {
+        guard antigravityAccounts.contains(where: { $0.id == account.id }) else { return }
+        antigravityAccounts.removeAll { $0.id == account.id }
+        NotificationManager.shared.resetNotificationStates(for: .antigravity, accountId: account.id)
+        if account.antigravitySource == .oauth {
+            // 删掉一个 OAuth 账户后，原本因为撞邮箱而被隐藏的 Keychain 账户应该重新出现，
+            // 这里面也会归一化 `currentAntigravityAccountId`。
+            syncAntigravityKeychainAccountVisibility()
+        } else {
+            normalizeAntigravityCurrentAccountId()
+        }
+        Logger.settings.notice("删除 Antigravity 账户: \(account.displayName)")
+        postAccountChanged(provider: .antigravity)
+    }
+
+    func switchToAntigravityAccount(_ account: Account) {
+        guard account.id != currentAntigravityAccountId else { return }
+        guard antigravityAccounts.contains(where: { $0.id == account.id }) else { return }
+        currentAntigravityAccountId = account.id
+        Logger.settings.notice("切换到 Antigravity 账户: \(account.displayName)")
+        postAccountChanged(provider: .antigravity)
+    }
+
+    func updateAntigravityAccount(_ account: Account, alias: String?) {
+        guard let index = antigravityAccounts.firstIndex(where: { $0.id == account.id }) else { return }
+        antigravityAccounts[index].alias = alias
+        Logger.settings.notice("更新 Antigravity 账户别名: \(self.antigravityAccounts[index].displayName)")
+    }
+
+    /// `AntigravityTokenProvider` 的 refresh token 读取钩子绑定目标：只读 `.oauth` 账户的
+    /// `sessionKey`。显式断言 `provider == .antigravity`——这是全项目里唯一一个把
+    /// `Account.sessionKey` 当 Antigravity token 读的地方。
+    func antigravityOAuthRefreshToken(accountId: UUID) -> String? {
+        guard let account = antigravityAccounts.first(where: { $0.id == accountId }) else { return nil }
+        assert(account.provider == .antigravity, "antigravityOAuthRefreshToken 只能用于 Antigravity 账户")
+        return account.sessionKey.isEmpty ? nil : account.sessionKey
+    }
+
+    /// `AntigravityTokenProvider` 刷新后（若 Google 轮换了 refresh_token）的持久化钩子绑定目标。
+    func persistAntigravityOAuthRefreshToken(accountId: UUID, refreshToken: String) {
+        guard let index = antigravityAccounts.firstIndex(where: { $0.id == accountId }) else { return }
+        assert(antigravityAccounts[index].provider == .antigravity, "persistAntigravityOAuthRefreshToken 只能用于 Antigravity 账户")
+        antigravityAccounts[index].sessionKey = refreshToken
+    }
+
+    /// `DataRefreshManager` 在**每一次** Keychain 来源拉取成功之后都调用一次（不再只在
+    /// `organizationName == "Antigravity"` 的占位符阶段调用一次——那个 guard 在第一次成功解析后
+    /// 恒为 false，之后这个方法再也不会被调用，`agy logout && agy login <另一个账户>` 这种原地
+    /// 身份替换永远发现不了，App 会继续把用户从未同意过的身份的凭据发出去；调用方改动见
+    /// `DataRefreshManager.resolveAntigravityKeychainIdentity(account:)`）：
+    /// 1. 把解析出的 Google 身份（email + `sub`）写回 Keychain 伪账户，并持久化到
+    ///    `antigravityKeychainResolvedEmail`（不依赖伪账户是否存活，见该属性上的说明），
+    ///    使按邮箱去重（`isAntigravityKeychainAccountRedundant`）真正生效且跨伪账户的
+    ///    创建/移除保持稳定；
+    /// 2. 核验这次解析出的身份是否与用户 opt-in 时同意的身份一致；不一致则自动撤回 opt-in，
+    ///    而不是悄悄把新身份的 token 发出去（对照 `codexCLIConsentedAccountHash` 的同一套绑定身份逻辑）。
+    /// - Important: 只应在 Keychain 数据已经被合法读取之后调用（也就是 opt-in 之后的一次成功拉取）——
+    ///   本方法自己不发起任何网络请求，也不直接读 Keychain。
+    func resolveAntigravityKeychainIdentity(email: String?, sub: String?) {
+        guard let index = antigravityAccounts.firstIndex(where: { $0.id == Self.antigravityKeychainAccountId }) else { return }
+        let normalizedEmail = Self.normalizedAntigravityEmail(email)
+        guard normalizedEmail != nil || (sub?.isEmpty == false) else { return }
+
+        // 无条件持久化，先于任何其它逻辑——这是避免上面提到的震荡的核心：即使下面
+        // `syncAntigravityKeychainAccountVisibility()` 把这个伪账户整条移除，这份记录也不会
+        // 跟着消失。
+        // 只在 `normalizedEmail` 非空时才写入——`guard` 允许 `normalizedEmail == nil && sub != nil`
+        // 通过，若无条件赋值会把一个之前解析成功的邮箱重新抹成 `nil`，让按邮箱去重失效，
+        // 重新打开一种较弱形式的震荡。
+        if let normalizedEmail {
+            antigravityKeychainResolvedEmail = normalizedEmail
+        }
+
+        if let email, !email.isEmpty {
+            antigravityAccounts[index].organizationName = email
+        }
+        if let sub, !sub.isEmpty {
+            antigravityAccounts[index].organizationId = sub
+        } else if let normalizedEmail {
+            antigravityAccounts[index].organizationId = normalizedEmail
+        }
+
+        // 必须在下面可能翻转 `antigravityKeychainEnabled` 之前捕获——`hasAntigravityKeychainSource`
+        // 由 `antigravityKeychainEnabled && antigravityKeychainDetected` 决定，若在翻转之后才读，
+        // 这次翻转造成的差异就被"抢跑"抹平了，下面的 `wasConfigured != hasAntigravityKeychainSource`
+        // 恒为 false，`.accountChanged` 永远不会因为身份替换而真正发出（此前是一次永远不会
+        // 触发的死通知）。
+        let wasConfigured = hasAntigravityKeychainSource
+
+        let identityKey = normalizedEmail ?? antigravityAccounts[index].organizationId
+        let identityHash = Self.consentDigest(for: identityKey)
+        if antigravityKeychainEnabled {
+            if let consented = antigravityKeychainConsentedIdentityHash {
+                if consented != identityHash {
+                    antigravityKeychainEnabled = false
+                    antigravityKeychainAccountChanged = true
+                    // 撤销时必须清掉旧摘要，否则用户在 Auth 页重新点击「同意」
+                    // （`setAntigravityKeychainEnabled(true)`）之后，下一次成功解析仍然拿旧摘要
+                    // 比对新身份，会再次判定"不一致"并再次撤回，用户永远无法完成再同意
+                    // （否则再同意会被锁死）。
+                    antigravityKeychainConsentedIdentityHash = nil
+                    Logger.settings.notice("Antigravity Keychain 凭据换成了另一个 Google 身份，已撤回 opt-in")
+                }
+            } else {
+                antigravityKeychainConsentedIdentityHash = identityHash
+            }
+        }
+
+        // 去重判定（`isAntigravityKeychainAccountRedundant`）依赖上面刚写回的
+        // `organizationName`/`organizationId`，可能让这次解析出的身份恰好撞上一个已存在的 OAuth
+        // 账户——`antigravityKeychainEnabled`/`antigravityKeychainDetected` 都没变，`wasConfigured
+        // != hasAntigravityKeychainSource` 因此恒为 false，但伪账户确确实实被下面
+        // `syncAntigravityKeychainAccountVisibility()` 整条移除了。若只看前者，这条去重移除路径
+        // 永远不会触发 `.accountChanged`，`DataRefreshManager.pruneAntigravityAccountState()` 也就
+        // 永远不会跑，Keychain 的内存态 access token（以及三个 `…ByAccount` 字典里的残留）会一直
+        // 留到下一次别的账户变化事件才被清理。这里额外核对伪账户本身的
+        // 存在性，去重移除时也走同一条通知路径。
+        let existedBefore = antigravityAccounts.contains { $0.id == Self.antigravityKeychainAccountId }
+        syncAntigravityKeychainAccountVisibility()
+        let existsAfter = antigravityAccounts.contains { $0.id == Self.antigravityKeychainAccountId }
+        if wasConfigured != hasAntigravityKeychainSource || (existedBefore && !existsAfter) {
+            // 身份变化触发了上面的自动撤回，或者这次解析让伪账户变得多余而被移除：
+            // 必须让 `.accountChanged` 真正发出去，好让 `DataRefreshManager` 清空旧身份的数据、
+            // 失效其 token 缓存。
+            postAccountChanged(provider: .antigravity)
+        }
+    }
+
+    /// 显式启用 / 关闭 Antigravity Keychain 来源（一次性 opt-in，来自 Auth 页的用户点击）
+    func setAntigravityKeychainEnabled(_ enabled: Bool) {
+        guard antigravityKeychainEnabled != enabled else { return }
+
+        if enabled {
+            // 先探测（此时 `antigravityKeychainEnabled` 仍是 false，`hasAntigravityKeychainSource`
+            // 恒为 false，`refreshAntigravityKeychainState()` 内部不会误发通知）、后翻开关，
+            // 再显式补一次账户物化——与 `setCodexCLIEnabled(true)` 的排序注释同一个理由。
+            refreshAntigravityKeychainState()
+            // 未探测到任何凭据条目时拒绝启用——否则日后 `agy` 才安装，会在没有任何新同意手势的
+            // 情况下静默复活这个开关。
+            guard antigravityKeychainDetected else { return }
+            antigravityKeychainAccountChanged = false
+            antigravityKeychainEnabled = true
+            syncAntigravityKeychainAccountVisibility()
+            if hasValidAntigravityCredentials {
+                ensureDefaultAntigravityDisplayTypesForCustomMode()
+            }
+        } else {
+            antigravityKeychainEnabled = false
+            // `antigravityKeychainResolvedEmail` 与 `antigravityKeychainConsentedIdentityHash`
+            // 生命周期恒等——两者总是一起写入（见 `resolveAntigravityKeychainIdentity`），
+            // 因此也必须一起清空；否则用户重新 opt-in 后，`syncAntigravityKeychainAccountVisibility()`
+            // 会用这份陈旧邮箱继续跟一个新的 OAuth 账户去重比对，即使 Keychain 里已经换了身份。
+            antigravityKeychainConsentedIdentityHash = nil
+            antigravityKeychainResolvedEmail = nil
+            antigravityKeychainAccountChanged = false
+            syncAntigravityKeychainAccountVisibility()
+        }
+
+        Logger.settings.notice("Antigravity Keychain 来源已\(enabled ? "启用" : "关闭", privacy: .public)")
+        postAccountChanged(provider: .antigravity)
+    }
+
+    /// 重新探测 agy 钥匙串凭据条目是否存在，更新 `antigravityKeychainDetected`；
+    /// 条目消失时自动撤下 **Keychain 来源** 的 opt-in —— 与 `refreshCodexCLIState()` 对称，
+    /// 但只影响 Keychain 来源，OAuth 账户完全不受 agy 是否安装影响。
+    /// - Important: 只读探测（`AntigravityCredentialStore.isPresent`，属性探测不读数据），
+    ///   绝不在这里触发 ACL 授权框或网络请求。
+    @discardableResult
+    func refreshAntigravityKeychainState() -> Bool {
+        let wasConfigured = hasAntigravityKeychainSource
+        antigravityKeychainDetected = AntigravityCredentialStore.isPresent
+
+        if !antigravityKeychainDetected && antigravityKeychainEnabled {
+            antigravityKeychainEnabled = false
+            // 见 `setAntigravityKeychainEnabled(false)` 上的同一条不变量注释：这两个属性必须
+            // 一起清空，否则凭据消失又重新出现（哪怕是另一个 Google 身份）时，陈旧的
+            // `antigravityKeychainResolvedEmail` 会永久压制一次本该正确去重/物化的账户。
+            antigravityKeychainConsentedIdentityHash = nil
+            antigravityKeychainResolvedEmail = nil
+            antigravityKeychainAccountChanged = false
+            Logger.settings.notice("Antigravity Keychain 凭据已消失，自动撤回 opt-in（OAuth 账户不受影响）")
+        }
+
+        syncAntigravityKeychainAccountVisibility()
+
+        let changed = (wasConfigured != hasAntigravityKeychainSource)
+        if changed {
+            postAccountChanged(provider: .antigravity)
+        }
+        return changed
+    }
+
+    /// 保证 `currentAntigravityAccountId` 恒指向一个仍然存在于 `antigravityAccounts` 里的账户；
+    /// 账户集合发生任何增删/隐藏后都必须调用一次——否则它可能悬空指向一个已被移除/刚判定为
+    /// 多余的伪账户，导致按这个 id 查找 `antigravityUsageByAccount` 永远拿不到数据，即使其它
+    /// 账户明明拉取成功。
+    private func normalizeAntigravityCurrentAccountId() {
+        if let id = currentAntigravityAccountId, antigravityAccounts.contains(where: { $0.id == id }) {
+            return
+        }
+        currentAntigravityAccountId = antigravityAccounts.first?.id
+    }
+
+    /// 把「Keychain 来源是否已配置、且不与某个 OAuth 账户重复」这一状态同步成 `antigravityAccounts`
+    /// 里那 1 个（或 0 个）稳定 id 的伪账户，使遍历账户列表的下游代码（`DataRefreshManager` 的
+    /// 按账户拉取、去重判断）不必单独分支处理 Keychain 来源。
+    /// - Important: 该伪账户 `sessionKey` 恒为空字符串（`Account.antigravitySource` 据此
+    ///   判定为 `.keychain`）。首次创建时 `organizationName` 是占位符 `"Antigravity"`——
+    ///   真实邮箱只有在 `resolveAntigravityKeychainIdentity(_:_:)` 里才会写回（后台探测周期
+    ///   不读数据）。
+    /// - Important: 判定为多余（`isAntigravityKeychainAccountRedundant`）时**整条移除**，
+    ///   不留一个不会被拉取、却仍会被 `hasAnyAntigravitySource` 计入的僵尸条目。
+    /// - Important: 每次改变 `antigravityAccounts` 后都会调用 `normalizeAntigravityCurrentAccountId()`。
+    private func syncAntigravityKeychainAccountVisibility() {
+        let shouldExist = hasAntigravityKeychainSource && !isAntigravityKeychainAccountRedundant
+        let existingIndex = antigravityAccounts.firstIndex { $0.id == Self.antigravityKeychainAccountId }
+
+        if shouldExist {
+            if existingIndex == nil {
+                let wasFirstAntigravityAccount = antigravityAccounts.isEmpty
+                let account = Account(
+                    id: Self.antigravityKeychainAccountId,
+                    sessionKey: "",
+                    organizationId: "agy-keychain",
+                    organizationName: "Antigravity",
+                    alias: nil,
+                    createdAt: Date(),
+                    provider: .antigravity
+                )
+                antigravityAccounts.append(account)
+                if wasFirstAntigravityAccount {
+                    ensureDefaultAntigravityDisplayTypesForCustomMode()
+                }
+            }
+        } else if let index = existingIndex {
+            antigravityAccounts.remove(at: index)
+        }
+        normalizeAntigravityCurrentAccountId()
+    }
+
+    /// 在 `.custom` 显示模式下，第一个 Antigravity 账户/来源出现时补齐默认显示项，
+    /// 否则用户会静默看到零行——与 `ensureDefaultCodexDisplayTypesForCustomMode()` 同一职责。
+    private func ensureDefaultAntigravityDisplayTypesForCustomMode() {
+        guard displayMode == .custom else { return }
+        let antigravityTypes: Set<LimitType> = [.antigravityPrimary, .antigravitySecondary]
+        guard customDisplayTypes.isDisjoint(with: antigravityTypes) else { return }
+        customDisplayTypes.formUnion(antigravityTypes)
     }
 
     // MARK: - 非敏感设置（存储在UserDefaults中）
@@ -1274,6 +1837,51 @@ class UserSettings: ObservableObject {
             defaults.stringArray(forKey: Self.codexCLIDismissedAccountKeysKey) ?? []
         )
 
+        // MARK: - 加载 Antigravity 账户与来源状态
+
+        let loadedAntigravityAccounts = keychain.loadAntigravityAccounts() ?? []
+        self.antigravityAccounts = loadedAntigravityAccounts
+
+        #if DEBUG
+        let antigravityCurrentAccountIdKey = "DEBUG_currentAntigravityAccountId"
+        #else
+        let antigravityCurrentAccountIdKey = "currentAntigravityAccountId"
+        #endif
+        if let idString = defaults.string(forKey: antigravityCurrentAccountIdKey),
+           let id = UUID(uuidString: idString) {
+            self.currentAntigravityAccountId = id
+        } else {
+            self.currentAntigravityAccountId = loadedAntigravityAccounts.first?.id
+        }
+
+        // 加载 Antigravity 凭据来源偏好（Keychain / OAuth），默认 OAuth——Google 登录是推荐路径
+        #if DEBUG
+        let antigravitySourceKey = "DEBUG_preferredAntigravitySource"
+        #else
+        let antigravitySourceKey = "preferredAntigravitySource"
+        #endif
+        if let sourceString = defaults.string(forKey: antigravitySourceKey),
+           let source = AntigravitySource(rawValue: sourceString) {
+            self.preferredAntigravitySource = source
+        } else {
+            self.preferredAntigravitySource = .oauth
+        }
+
+        // 加载 Antigravity Keychain 来源显式启用标记，默认 false（未 opt-in 前不使用 Keychain 凭据）
+        #if DEBUG
+        let antigravityKeychainEnabledKey = "DEBUG_antigravityKeychainEnabled"
+        #else
+        let antigravityKeychainEnabledKey = "antigravityKeychainEnabled"
+        #endif
+        self.antigravityKeychainEnabled = defaults.bool(forKey: antigravityKeychainEnabledKey)
+
+        // 加载「用户 opt-in 时绑定的 Keychain 身份」摘要
+        self.antigravityKeychainConsentedIdentityHash = defaults.string(forKey: Self.antigravityKeychainConsentedIdentityHashKey)
+
+        // 加载 Keychain 来源已解析出的邮箱——跨伪账户的创建/移除持久化，去重判定依赖它而不是
+        // 伪账户自身（见该属性上的说明）。
+        self.antigravityKeychainResolvedEmail = defaults.string(forKey: Self.antigravityKeychainResolvedEmailKey)
+
         // MARK: - 旧版迁移（v1.x → v2.0.0，保留向后兼容）
 
         // 迁移 Organization ID 从 Keychain 到 UserDefaults（旧版迁移，现已包含在上面的多账户迁移中）
@@ -1391,6 +1999,20 @@ class UserSettings: ObservableObject {
         self.debugKeepDetailWindowOpen = defaults.bool(forKey: "debugKeepDetailWindowOpen")
         #endif
 
+        // 冷启动归一化：`accounts_antigravity` 里持久化的 Keychain 伪账户不会在这里被探测
+        // `antigravityKeychainDetected`（探测要等第一次 `refreshAntigravityKeychainState()`，
+        // 通常发生在 `DataRefreshManager.fetchUsage()`）。这一刻 `antigravityKeychainDetected`
+        // 恒为 false（属性默认值，尚未探测），若在这里调用完整的
+        // `syncAntigravityKeychainAccountVisibility()`，`hasAntigravityKeychainSource` 会被这个
+        // 尚未成立的「未探测到」误判为 false，导致每次冷启动都把上次持久化下来的 Keychain
+        // 伪账户整条移除、稍后又带着占位符 `organizationName = "Antigravity"` 和全新 `createdAt`
+        // 重新创建——已解析的邮箱标签和用户对这个伪账户的选中状态都会被冷启动本身抹掉。
+        // 因此这里只做「`currentAntigravityAccountId` 不能悬空指向一个已经
+        // 不存在的账户」这一件事，不触碰伪账户的存在与否——真正的存在性判定留给探测完成之后的
+        // 那次 `syncAntigravityKeychainAccountVisibility()`（`refreshAntigravityKeychainState()` /
+        // `resolveAntigravityKeychainIdentity(_:_:)`，两者都会在探测/解析之后自然调用一次）。
+        normalizeAntigravityCurrentAccountId()
+
         // 同步系统实际状态
         syncLaunchAtLoginStatus()
 
@@ -1422,8 +2044,11 @@ class UserSettings: ObservableObject {
     }
 
     /// 检查任一 Provider 的认证信息是否已配置
+    /// - Important: 必须包含 Antigravity（`hasValidAntigravityCredentials`），否则一个纯
+    ///   Antigravity 用户的定时器永远不会启动（`MenuBarManager.ensureRefreshingIfCredentialed()`
+    ///   是全部 5 条定时器启动路径的唯一闸门），否则每次启动都会看到 Welcome 窗口。
     var hasAnyValidCredentials: Bool {
-        return hasValidCredentials || hasValidCodexCredentials
+        return hasValidCredentials || hasValidCodexCredentials || hasValidAntigravityCredentials
     }
 
     /// 验证 Organization ID 格式
@@ -1690,6 +2315,9 @@ class UserSettings: ObservableObject {
             accounts[index].color = color
         } else if let index = codexAccounts.firstIndex(where: { $0.id == accountId }) {
             codexAccounts[index].color = color
+        } else if let index = antigravityAccounts.firstIndex(where: { $0.id == accountId }) {
+            // Antigravity 账户的颜色选择器复用同一个通用函数（见 AuthSettingsView.accountRow）。
+            antigravityAccounts[index].color = color
         } else {
             return
         }
@@ -1921,7 +2549,7 @@ class UserSettings: ObservableObject {
     ///   - usageData: Claude 用量数据
     ///   - codexUsageData: Codex 用量数据（可选，有 Codex 账号时传入）
     /// - Returns: 要显示的限制类型数组，按显示顺序排列
-    func getActiveDisplayTypes(usageData: UsageData?, codexUsageData: CodexUsageData? = nil) -> [LimitType] {
+    func getActiveDisplayTypes(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, hasAntigravityPrimary: Bool = false, hasAntigravitySecondary: Bool = false) -> [LimitType] {
         switch displayMode {
         case .smart:
             // 智能模式：显示所有有数据的类型
@@ -1954,20 +2582,34 @@ class UserSettings: ObservableObject {
                 }
             }
 
+            // Antigravity 类型：只要任意账户具备该槽位就追加（跨账户合并判断已在调用方完成，
+            // 这里只读两个布尔，取代原先合成一个 `AntigravityUsageData` 代表值的做法）。
+            if hasAntigravityPrimary {
+                types.append(.antigravityPrimary)
+            }
+            if hasAntigravitySecondary {
+                types.append(.antigravitySecondary)
+            }
+
             return types
 
         case .custom:
             // 自定义模式：按用户选择排序，无论数据是否存在都显示
-            // Codex 类型仅在有 Codex 账号时纳入候选；Debug mock 模式例外
+            // Codex / Antigravity 类型仅在各自有账号时纳入候选；Debug mock 模式例外
             var orderedTypes: [LimitType] = [.fiveHour, .sevenDay, .extraUsage, .opusWeekly, .sonnetWeekly]
             var shouldIncludeCodexTypes = hasAnyCodexSource
+            var shouldIncludeAntigravityTypes = hasAnyAntigravitySource
             #if DEBUG
             if debugModeEnabled {
                 shouldIncludeCodexTypes = true
+                shouldIncludeAntigravityTypes = true
             }
             #endif
             if shouldIncludeCodexTypes {
                 orderedTypes.append(contentsOf: [.codexPrimary, .codexSecondary, .codexExtraUsage])
+            }
+            if shouldIncludeAntigravityTypes {
+                orderedTypes.append(contentsOf: [.antigravityPrimary, .antigravitySecondary])
             }
             return orderedTypes.filter { customDisplayTypes.contains($0) }
         }

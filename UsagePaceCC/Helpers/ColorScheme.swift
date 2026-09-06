@@ -331,6 +331,79 @@ enum UsageColorScheme {
         }
     }
 
+    // MARK: - Antigravity Primary 配色（浅紫 → 紫 → 深紫，圆形）
+
+    /// 根据 Antigravity primary（拍平后的 bucket 0）使用百分比返回 NSColor
+    /// - Note: 0-70% 浅紫(安全), 70-90% 紫色(警告), 90-100% 深紫(危险)。刻意与 Claude 的
+    ///   7 天紫色系（`sevenDayColor`）以及 `AccountColor.violet` 使用不同色阶，
+    ///   与 Codex 的松石/蓝色系区分。
+    static func antigravityPrimaryColor(_ percentage: Double) -> NSColor {
+        if percentage < 70 {
+            return NSColor(red: 167/255.0, green: 139/255.0, blue: 250/255.0, alpha: 1.0)  // #A78BFA 浅紫
+        } else if percentage < 90 {
+            return NSColor(red: 124/255.0, green: 58/255.0, blue: 237/255.0, alpha: 1.0)   // #7C3AED 紫
+        } else {
+            return NSColor(red: 76/255.0, green: 29/255.0, blue: 149/255.0, alpha: 1.0)    // #4C1D95 深紫
+        }
+    }
+
+    /// 根据 Antigravity primary 使用百分比返回 SwiftUI Color
+    static func antigravityPrimaryColorSwiftUI(_ percentage: Double, opacity: Double = 0.9) -> Color {
+        if percentage < 70 {
+            return Color(red: 167/255.0, green: 139/255.0, blue: 250/255.0).opacity(opacity)  // #A78BFA
+        } else if percentage < 90 {
+            return Color(red: 124/255.0, green: 58/255.0, blue: 237/255.0).opacity(opacity)   // #7C3AED
+        } else {
+            return Color(red: 76/255.0, green: 29/255.0, blue: 149/255.0).opacity(opacity)    // #4C1D95
+        }
+    }
+
+    /// 根据 Antigravity primary 使用百分比返回自适应 NSColor
+    static func antigravityPrimaryColorAdaptive(_ percentage: Double, for statusButton: NSStatusBarButton? = nil) -> NSColor {
+        let baseColor = antigravityPrimaryColor(percentage)
+        if isDarkMode(for: statusButton) {
+            return baseColor.adjustedForDarkMode()
+        } else {
+            return baseColor
+        }
+    }
+
+    // MARK: - Antigravity Secondary 配色（浅洋红 → 洋红 → 深洋红，虚线圆形）
+
+    /// 根据 Antigravity secondary（拍平后的 bucket 1）使用百分比返回 NSColor
+    /// - Note: 0-70% 浅洋红(安全), 70-90% 洋红(警告), 90-100% 深洋红(危险)。
+    ///         与 primary 的紫色系区分，避免两个圆环过于接近。
+    static func antigravitySecondaryColor(_ percentage: Double) -> NSColor {
+        if percentage < 70 {
+            return NSColor(red: 232/255.0, green: 121/255.0, blue: 249/255.0, alpha: 1.0)  // #E879F9 浅洋红
+        } else if percentage < 90 {
+            return NSColor(red: 192/255.0, green: 38/255.0, blue: 211/255.0, alpha: 1.0)   // #C026D3 洋红
+        } else {
+            return NSColor(red: 134/255.0, green: 25/255.0, blue: 143/255.0, alpha: 1.0)   // #86198F 深洋红
+        }
+    }
+
+    /// 根据 Antigravity secondary 使用百分比返回 SwiftUI Color
+    static func antigravitySecondaryColorSwiftUI(_ percentage: Double, opacity: Double = 0.9) -> Color {
+        if percentage < 70 {
+            return Color(red: 232/255.0, green: 121/255.0, blue: 249/255.0).opacity(opacity)  // #E879F9
+        } else if percentage < 90 {
+            return Color(red: 192/255.0, green: 38/255.0, blue: 211/255.0).opacity(opacity)   // #C026D3
+        } else {
+            return Color(red: 134/255.0, green: 25/255.0, blue: 143/255.0).opacity(opacity)   // #86198F
+        }
+    }
+
+    /// 根据 Antigravity secondary 使用百分比返回自适应 NSColor
+    static func antigravitySecondaryColorAdaptive(_ percentage: Double, for statusButton: NSStatusBarButton? = nil) -> NSColor {
+        let baseColor = antigravitySecondaryColor(percentage)
+        if isDarkMode(for: statusButton) {
+            return baseColor.adjustedForDarkMode()
+        } else {
+            return baseColor
+        }
+    }
+
     // MARK: - 备选配色方案（注释保留，方便切换测试）
 
     /*

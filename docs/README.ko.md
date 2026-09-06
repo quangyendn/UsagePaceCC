@@ -40,6 +40,7 @@
 - **🔔 사용량 알림** - 사용량 90% 도달 시 경고 알림, 할당량 재설정 시 리셋 알림 전송
 - **👥 다중 계정 관리** - Claude 다중 계정 / 동일 계정 다중 조직과 독립적인 Codex 계정 관리 및 빠른 전환 지원
 - **🧩 Codex 지원** - 선택적 Codex 사용량 모니터링. Codex 단독 사용 또는 Claude와 나란히 이중 열 뷰로 표시 가능(설정에서 Codex 계정 추가 시 활성화)
+- **🪐 Antigravity 지원** - 선택적 Google Antigravity 주간 할당량 모니터링(Gemini 및 3rd-party 모델 그룹). Google 로그인(권장) 또는 Antigravity 앱 자체 로그인을 이용한 간편 연결 지원
 - **🌐 내장 브라우저 로그인** - Claude 로그인은 Session Key를 자동 추출하고, Codex는 내장 브라우저에서 ChatGPT에 로그인해 인증 정보를 가져옵니다
 - **🎨 외관 설정** - 시스템 설정 따르기 / 라이트 / 다크 세 가지 외관 모드 지원
 - **🕐 시간 형식** - 시스템 기본 / 12시간제 / 24시간제 지원
@@ -65,6 +66,14 @@
 - Codex 5시간, 7일, 추가 사용량/credits 정보 지원
 - 내장 브라우저에서 ChatGPT에 로그인해 Codex 계정 추가
 - Claude-only 사용자는 추가 설정이 필요 없으며, Codex 계정을 추가하기 전까지 기존 경험이 유지됩니다
+
+### 🪐 Antigravity 지원
+
+- Claude, Codex와 함께 Google Antigravity의 주간 할당량(Gemini 및 3rd-party 모델 그룹)을 모니터링
+- **Google 로그인(권장)** - 설정 → 인증에서 Antigravity 계정을 하나 이상 추가; UsagePaceCC 자체 자격 증명이므로 Antigravity 앱 업데이트 후에도 계속 작동합니다
+- **Antigravity 앱 간편 연결(선택)** - 대신 이 Mac의 Antigravity 앱에 이미 저장된 로그인을 재사용(계정 1개만, 명시적 옵트인 필요)
+- 로그인 중 표시되는 Google 동의 화면은 UsagePaceCC가 아닌 **Antigravity** 브랜드로 표시됩니다 — Antigravity 자체 OAuth 클라이언트를 사용하기 때문에 정상적인 동작이며, UsagePaceCC는 Google 비밀번호를 보거나 저장하지 않습니다
+- Claude/Codex만 사용하는 사용자는 추가 설정이 필요 없으며, Antigravity 계정을 추가하기 전까지 기존 경험이 유지됩니다
 
 ### 🎨 개인화
 
@@ -96,7 +105,7 @@
 ### 🔒 보안 및 개인정보
 
 - 🏠 **로컬 저장소만** - 모든 데이터는 로컬에만 저장, 개인 정보 수집 및 업로드 절대 없음
-- 🔐 **Keychain 보호** - Claude Session Key와 Codex 인증 토큰은 Keychain에 저장, 평문 키 없음
+- 🔐 **Keychain 보호** - Claude Session Key, Codex 인증 토큰, Antigravity 리프레시 토큰은 Keychain에 저장, 평문 키 없음
 - 📖 **오픈 소스 투명성** - 코드 완전 공개, 누구나 감사 가능
 - 🛡️ **샌드박스 보호** - App Sandbox 활성화로 보안 강화
 

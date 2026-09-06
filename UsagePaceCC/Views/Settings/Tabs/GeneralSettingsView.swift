@@ -147,7 +147,15 @@ struct GeneralSettingsView: View {
                                     .foregroundColor(.secondary)
 
                                 VStack(alignment: .leading, spacing: 8) {
-                                    ForEach(LimitType.allCases, id: \.self) { limitType in
+                                    // Antigravity 的两个 case 只在存在任意 Antigravity 来源时才纳入候选，
+                                    // 否则未配置该 provider 的用户会在 Settings 里看到两个未本地化的、
+                                    // 恒不可用的新 checkbox。
+                                    // 注意：Codex 类型目前无条件出现在这里，属于既有行为，本次不改动它。
+                                    // DEBUG 下额外放行 `debugModeEnabled`——与 `getActiveDisplayTypes` /
+                                    // `shouldFetchAntigravityUsage` 的同名逃生舱一致，否则 mock 模式下、
+                                    // `.custom` 显示模式里永远勾选不了任何 Antigravity 类型，mock 数据路径
+                                    // 就此不可达。
+                                    ForEach(LimitType.allCases.filter { $0.provider != .antigravity || isAntigravityLimitTypeCandidate }, id: \.self) { limitType in
                                         LimitTypeCheckbox(
                                             limitType: limitType,
                                             isSelected: settings.customDisplayTypes.contains(limitType),
@@ -701,9 +709,22 @@ struct GeneralSettingsView: View {
 
     // MARK: - Display Options Helpers
 
+    /// Antigravity 的两个 `LimitType` case 是否应该作为候选项出现在自定义显示勾选列表里：
+    /// 正常情况下要求存在任意真实 Antigravity 来源；DEBUG 构建下额外放行 `debugModeEnabled`，
+    /// 与 `UserSettings.getActiveDisplayTypes` / `shouldFetchAntigravityUsage` 的同名逃生舱一致，
+    /// 否则 mock 模式下、`.custom` 显示模式里永远勾选不了任何 Antigravity 类型，mock 数据路径
+    /// 就此不可达。注意：Codex 类型不走这条判断，保持既有的无条件出现。
+    private var isAntigravityLimitTypeCandidate: Bool {
+        if settings.hasAnyAntigravitySource { return true }
+        #if DEBUG
+        if settings.debugModeEnabled { return true }
+        #endif
+        return false
+    }
+
     /// 判断是否只剩一个圆形图标
     private var hasOnlyOneCircularIcon: Bool {
-        let circularTypes: Set<LimitType> = [.fiveHour, .sevenDay, .codexPrimary, .codexSecondary]
+        let circularTypes: Set<LimitType> = [.fiveHour, .sevenDay, .codexPrimary, .codexSecondary, .antigravityPrimary, .antigravitySecondary]
         let selectedCircular = settings.customDisplayTypes.intersection(circularTypes)
         return selectedCircular.count == 1
     }
@@ -724,7 +745,7 @@ struct GeneralSettingsView: View {
         }
         #endif
 
-        let circularTypes: Set<LimitType> = [.fiveHour, .sevenDay, .codexPrimary, .codexSecondary]
+        let circularTypes: Set<LimitType> = [.fiveHour, .sevenDay, .codexPrimary, .codexSecondary, .antigravityPrimary, .antigravitySecondary]
 
         // 如果这是最后一个选中的圆形图标，则禁用
         if circularTypes.contains(limitType) {
@@ -815,6 +836,11 @@ struct LimitTypeCheckbox: View {
         case .codexPrimary:  return Color(red: 45/255.0, green: 212/255.0, blue: 191/255.0)
         case .codexSecondary: return Color(red: 96/255.0, green: 165/255.0, blue: 250/255.0)
         case .codexExtraUsage: return Color(red: 245/255.0, green: 158/255.0, blue: 11/255.0)
+        // 复用 `UsageColorScheme` 的百分比配色函数本身（取警告档 75% 的中段色值），而不是把它的
+        // 输出结果誊抄成字面量——否则这六个函数除了这里"看起来被用到"之外没有任何真正调用方。
+        // `opacity: 1` 保持与其它 provider 分支同样的不透明字面量外观。
+        case .antigravityPrimary: return UsageColorScheme.antigravityPrimaryColorSwiftUI(75, opacity: 1)
+        case .antigravitySecondary: return UsageColorScheme.antigravitySecondaryColorSwiftUI(75, opacity: 1)
         }
     }
 }

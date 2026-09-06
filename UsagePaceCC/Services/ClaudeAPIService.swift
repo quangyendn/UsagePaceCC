@@ -1103,8 +1103,11 @@ enum UsageError: LocalizedError {
             return L.Error.unauthorized
         case .rateLimited:
             return L.Error.rateLimited
-        case .httpError(let statusCode):
-            return "HTTP 错误: \(statusCode)"
+        case .httpError:
+            // 不带原始 HTTP 状态码——那是内部诊断信息，绝不能进用户可见文案；这条描述现在也
+            // 经由 `AntigravitySourceError` 流向 Antigravity 的 Auth 页渲染路径，不只是 Claude
+            // 自己的弹出框。日志记录仍应在抛出处自带状态码。
+            return "Server returned an unexpected error"
         }
     }
 }

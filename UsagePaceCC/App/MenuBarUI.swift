@@ -283,6 +283,20 @@ class MenuBarUI {
             hasAccountMenuItems = true
         }
 
+        if settings.antigravityAccounts.count > 1 {
+            let antigravitySubmenu = createAntigravityAccountSubmenu(target: target)
+            let currentAntigravityName = settings.currentAntigravityAccount?.displayName ?? "Antigravity"
+            let antigravityItem = NSMenuItem(
+                title: "Antigravity: \(currentAntigravityName)",
+                action: nil,
+                keyEquivalent: ""
+            )
+            antigravityItem.submenu = antigravitySubmenu
+            setMenuItemIcon(antigravityItem, systemName: "person.2.fill")
+            menu.addItem(antigravityItem)
+            hasAccountMenuItems = true
+        }
+
         if hasAccountMenuItems {
             menu.addItem(NSMenuItem.separator())
         }
@@ -445,6 +459,29 @@ class MenuBarUI {
         return submenu
     }
 
+    /// 创建 Antigravity 账户选择子菜单；镜像 `createCodexAccountSubmenu`。
+    private func createAntigravityAccountSubmenu(target: AnyObject?) -> NSMenu {
+        let submenu = NSMenu()
+
+        for account in settings.antigravityAccounts {
+            let item = NSMenuItem(
+                title: account.displayName,
+                action: #selector(MenuBarManager.switchAntigravityAccount(_:)),
+                keyEquivalent: ""
+            )
+            item.target = target
+            item.representedObject = account
+
+            if account.id == settings.currentAntigravityAccountId {
+                item.state = .on
+            }
+
+            submenu.addItem(item)
+        }
+
+        return submenu
+    }
+
     /// 创建彩虹文字 NSAttributedString
     /// - Parameters:
     ///   - text: 完整文本
@@ -514,16 +551,40 @@ class MenuBarUI {
     /// - Parameters:
     ///   - usageData: Claude 用量数据
     ///   - codexUsageData: Codex 用量数据
+    ///   - antigravityUsageData: **当前选中** Antigravity 账户（`settings.currentAntigravityAccountId`）
+    ///     的用量数据，镜像既有的 `codexUsageData` 参数——`DataRefreshManager` 没有导出跨账户
+    ///     合并的单值属性（见 phase-03 实现笔记），菜单栏字形只反映选中账户，切换账户子菜单
+    ///     会连带切换菜单栏图标。
+    ///   - hasAntigravityPrimary/hasAntigravitySecondary: 跨**全部** Antigravity 账户合并的
+    ///     "该槽位是否存在数据"布尔（供 `getActiveDisplayTypes` 判断类型是否应出现在智能/自定义
+    ///     列表里），与上面"只看选中账户"的 `antigravityUsageData` 是两件不同的事，不要混用。
     ///   - hasUpdate: 是否有可用更新
     ///   - shouldShowBadge: 是否显示更新徽章
-    func updateMenuBarIcon(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], hasUpdate: Bool, shouldShowBadge: Bool) {
+    func updateMenuBarIcon(
+        usageData: UsageData?,
+        codexUsageData: CodexUsageData? = nil,
+        claudeSnapshots: [AccountUsageSnapshot] = [],
+        antigravityUsageData: AntigravityUsageData? = nil,
+        hasAntigravityPrimary: Bool = false,
+        hasAntigravitySecondary: Bool = false,
+        hasUpdate: Bool,
+        shouldShowBadge: Bool
+    ) {
         guard let button = statusItem.button else { return }
 
         // 确定是否实际显示徽章
         let showBadge = hasUpdate && shouldShowBadge
 
         // 生成缓存键
-        let cacheKey = generateCacheKey(usageData: usageData, codexUsageData: codexUsageData, claudeSnapshots: claudeSnapshots, hasUpdate: showBadge)
+        let cacheKey = generateCacheKey(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            claudeSnapshots: claudeSnapshots,
+            antigravityUsageData: antigravityUsageData,
+            hasAntigravityPrimary: hasAntigravityPrimary,
+            hasAntigravitySecondary: hasAntigravitySecondary,
+            hasUpdate: showBadge
+        )
 
         // 尝试从缓存获取
         if let cachedImage = iconCache[cacheKey] {
@@ -536,6 +597,9 @@ class MenuBarUI {
             usageData: usageData,
             codexUsageData: codexUsageData,
             claudeSnapshots: claudeSnapshots,
+            antigravityUsageData: antigravityUsageData,
+            hasAntigravityPrimary: hasAntigravityPrimary,
+            hasAntigravitySecondary: hasAntigravitySecondary,
             hasUpdate: showBadge,
             button: button
         )
@@ -563,7 +627,7 @@ class MenuBarUI {
     ///     反映到缓存键中，否则会返回过期的图标组合（陈旧账户/颜色/百分比）。
     ///   - hasUpdate: 是否有更新徽章
     /// - Returns: 缓存键字符串
-    private func generateCacheKey(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], hasUpdate: Bool) -> String {
+    private func generateCacheKey(usageData: UsageData?, codexUsageData: CodexUsageData? = nil, claudeSnapshots: [AccountUsageSnapshot] = [], antigravityUsageData: AntigravityUsageData? = nil, hasAntigravityPrimary: Bool = false, hasAntigravitySecondary: Bool = false, hasUpdate: Bool) -> String {
         let isMulti = settings.isMultiProviderActive
         let accountsFingerprint = topUrgentAccounts(from: claudeSnapshots, limit: 2)
             .map { snapshot -> String in
@@ -572,6 +636,26 @@ class MenuBarUI {
                 return "\(snapshot.accountId.uuidString):\(snapshot.color.rawValue):\(fiveHour):\(sevenDay)"
             }
             .joined(separator: "|")
+
+        // Antigravity 只反映**当前选中账户**（同 Codex 的 `_cxp`/`_cxs` 约定），而不是像 Claude
+        // 那样跨账户取 `topUrgentAccounts`——`DataRefreshManager` 没有导出跨账户合并的单值属性。
+        // 显式带上选中账户 id：即使 `antigravityUsageData` 恰好没变
+        // （例如两个账户都是 nil），切换选中账户也必须让缓存键跟着变，否则账户子菜单切换后
+        // 菜单栏图标（账户颜色/占位显示名）不会重绘。
+        // `hasAntigravityPrimary`/`hasAntigravitySecondary` 是跨**全部**账户合并的布尔，驱动
+        // `getActiveDisplayTypes` 决定 Antigravity 的类型是否出现在智能/自定义列表里——账户 B
+        // 新增一个 secondary 数据桶会翻转这两个布尔，进而改变账户 A 在菜单栏上实际渲染的字形
+        // （是否显示 7d 扇区），即使账户 A 自己的 `_agp`/`_ags`/`_agcur` 三项都没变化。此前缓存键
+        // 没有带上这两个布尔，账户 B 的这类变化会被判定为"命中缓存"而不重绘，账户 A 的图标
+        // 停留在陈旧状态（对照 Codex `_cxp`/`_cxs` 同一角色的既有惯例——
+        // Codex 目前仍是单账户，尚未暴露出这个坑）。
+        var antigravityKey = "_agcur\(settings.currentAntigravityAccountId?.uuidString ?? "none")_agHasP\(hasAntigravityPrimary)_agHasS\(hasAntigravitySecondary)"
+        if let ag = antigravityUsageData {
+            if let p = ag.primary { antigravityKey += "_agp\(Int(p.usagePercentage))" } else { antigravityKey += "_agpnil" }
+            if let s = ag.secondary { antigravityKey += "_ags\(Int(s.usagePercentage))" } else { antigravityKey += "_agsnil" }
+        } else {
+            antigravityKey += "_agnil"
+        }
 
         guard let data = usageData else {
             var key = "no_data_\(settings.iconDisplayMode.rawValue)_\(settings.iconStyleMode.rawValue)_\(settings.displayMode.rawValue)_mp\(isMulti)"
@@ -603,6 +687,8 @@ class MenuBarUI {
                     key += "_cxenil"
                 }
             }
+
+            key += antigravityKey
 
             if hasUpdate {
                 key += "_badge"
@@ -636,6 +722,8 @@ class MenuBarUI {
             if let s = codex.secondary { key += "_cxs\(Int(s.percentage))" }
             if let e = codex.extraUsage?.percentage { key += "_cxe\(Int(e))" }
         }
+
+        key += antigravityKey
 
         if hasUpdate {
             key += "_badge"

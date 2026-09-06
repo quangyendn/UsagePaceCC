@@ -40,6 +40,7 @@
 - **🔔 Notifications d'utilisation** - Avertissement a 90 % d'utilisation, notification lors de la reinitialisation du quota
 - **👥 Gestion multi-comptes** - Support de plusieurs comptes Claude / plusieurs organisations par compte, avec gestion de comptes Codex independante et changement rapide
 - **🧩 Support Codex** - Surveillance optionnelle des quotas Codex ; utilisez Codex seul ou aux cotes de Claude en vue a deux colonnes
+- **🪐 Support Antigravity** - Surveillance optionnelle du quota hebdomadaire Google Antigravity (groupes Gemini et 3rd-party) ; connexion Google (recommandee) ou raccourci via la connexion propre a l'application Antigravity
 - **🌐 Connexion via navigateur integre** - Claude extrait automatiquement la Session Key ; Codex utilise le navigateur integre pour se connecter a ChatGPT
 - **🎨 Reglages d'apparence** - Support du mode systeme / clair / sombre
 - **🕐 Format horaire** - Support du format systeme / 12h / 24h
@@ -66,6 +67,14 @@ Toutes les plateformes partagent le meme quota d'utilisation, surveille en un se
 - Ajoutez un compte Codex en vous connectant a ChatGPT dans le navigateur integre
 - Les utilisateurs Claude-only n'ont rien a configurer ; l'experience reste inchangee tant qu'aucun compte Codex n'est ajoute
 
+### 🪐 Support Antigravity
+
+- Surveillez le quota hebdomadaire de Google Antigravity (groupes Gemini et 3rd-party) aux cotes de Claude et Codex
+- **Connexion Google (recommandee)** - Ajoutez un ou plusieurs comptes Antigravity directement dans Reglages → Authentification ; l'identifiant appartient a UsagePaceCC et continue de fonctionner apres les mises a jour de l'application Antigravity
+- **Raccourci via l'application Antigravity (optionnel)** - Reutilisez plutot la connexion deja stockee par l'application Antigravity sur ce Mac, un seul compte, derriere une activation explicite
+- L'ecran de consentement Google affiche pendant la connexion montre la marque **Antigravity**, pas celle de UsagePaceCC — c'est normal, car la connexion utilise le client OAuth propre a Antigravity ; UsagePaceCC ne voit ni ne stocke jamais votre mot de passe Google
+- Les utilisateurs Claude/Codex uniquement n'ont rien a configurer ; l'experience reste inchangee tant qu'aucun compte Antigravity n'est ajoute
+
 ### 🎨 Personnalisation
 
 - **🕓 Modes d'affichage multiples**
@@ -85,7 +94,7 @@ Toutes les plateformes partagent le meme quota d'utilisation, surveille en un se
 ### 🔒 Securite et confidentialite
 
 - 🏠 **Stockage local uniquement** - Toutes les donnees sont stockees localement, aucune collecte ni envoi d'informations personnelles
-- 🔐 **Protection Keychain** - Session Key Claude et jeton d'authentification Codex securises dans le trousseau, pas de cles en clair
+- 🔐 **Protection Keychain** - Session Key Claude, jeton d'authentification Codex et jetons de rafraichissement Antigravity securises dans le trousseau, pas de cles en clair
 - 📖 **Open source transparent** - Code entierement public, auditable par tous
 - 🛡️ **Protection Sandbox** - App Sandbox activee pour une securite renforcee
 

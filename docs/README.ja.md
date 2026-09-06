@@ -40,6 +40,7 @@
 - **🔔 使用量通知** - 使用率90%で警告通知、クォータリセット時にリセット通知を送信
 - **👥 マルチアカウント管理** - Claude の複数アカウント / 同一アカウント複数組織に加え、独立した Codex アカウント管理と素早い切り替えに対応
 - **🧩 Codex サポート** - 任意の Codex 使用量監視。Codex 単独でも、Claude と並列のデュアルカラムビューでも使用可能（設定で Codex アカウントを追加すると有効化）
+- **🪐 Antigravity サポート** - 任意の Google Antigravity 週次クォータ監視（Gemini および 3rd-party モデルグループ）。Google サインイン（推奨）または Antigravity アプリ自身のサインインを使った簡易接続に対応
 - **🌐 内蔵ブラウザログイン** - Claude ログインでは Session Key を自動抽出、Codex は内蔵ブラウザで ChatGPT にログインして認証情報を取得
 - **🎨 外観設定** - システム設定に従う / ライト / ダークの3つの外観モードをサポート
 - **🕐 時刻形式** - システムデフォルト / 12時間制 / 24時間制をサポート
@@ -65,6 +66,14 @@
 - Codex の5時間、7日間、追加使用量/credits 情報に対応
 - 内蔵ブラウザで ChatGPT にログインして Codex アカウントを追加
 - Claude-only ユーザーは追加設定不要。Codex アカウントを追加するまで既存体験のまま利用できます
+
+### 🪐 Antigravity サポート
+
+- Claude・Codex と並んで、Google Antigravity の週次クォータ（Gemini および 3rd-party モデルグループ）を監視
+- **Google サインイン（推奨）** - 設定 → 認証で Antigravity アカウントを1つ以上追加。UsagePaceCC 自身の資格情報のため、Antigravity アプリの更新後も動作し続けます
+- **Antigravity アプリの簡易接続（任意）** - 代わりに、この Mac 上の Antigravity アプリが保持しているサインインを再利用（1アカウントのみ、明示的なオプトインが必要）
+- サインイン時に表示される Google の同意画面は UsagePaceCC ではなく **Antigravity** のブランドで表示されます。これは Antigravity 自身の OAuth クライアントを使用しているためで、想定された挙動です。UsagePaceCC が Google のパスワードを見たり保存したりすることはありません
+- Claude/Codex のみを使うユーザーは追加設定不要。Antigravity アカウントを追加するまで既存体験のまま利用できます
 
 ### 🎨 カスタマイズ
 
@@ -96,7 +105,7 @@
 ### 🔒 セキュリティとプライバシー
 
 - 🏠 **ローカル保存のみ** - すべてのデータはローカルにのみ保存、個人情報の収集・アップロードは一切なし
-- 🔐 **Keychain 保護** - Claude Session Key と Codex 認証トークンは Keychain で保護、平文キーなし
+- 🔐 **Keychain 保護** - Claude Session Key、Codex 認証トークン、Antigravity のリフレッシュトークンは Keychain で保護、平文キーなし
 - 📖 **オープンソース** - コード完全公開、誰でも監査可能
 - 🛡️ **Sandbox 保護** - App Sandbox 有効でセキュリティ強化
 

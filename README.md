@@ -40,6 +40,7 @@
 - **🔔 Usage Notifications** - Warning notification at 90% usage, reset notification when quota resets
 - **👥 Multi-Account Management** - Support multiple Claude accounts / multiple organizations per account, plus independent Codex account management and quick switching
 - **🧩 Codex Support** - Optional Codex quota monitoring; use Codex alone or show it alongside Claude in a dual-column view (add a Codex account in settings to enable)
+- **🪐 Antigravity Support** - Optional Google Antigravity weekly quota monitoring (Gemini and third-party model groups); sign in with Google (recommended) or connect the Antigravity app's own sign-in as a quick shortcut
 - **🌐 Built-in Browser Login** - Claude login automatically extracts Session Key; Codex uses built-in browser login for ChatGPT authentication
 - **🎨 Appearance Settings** - Support system default / light / dark appearance modes
 - **🕐 Time Format** - Support system default / 12-hour / 24-hour format
@@ -65,6 +66,14 @@ All platforms share the same usage quota, monitored in one place!
 - Supports Codex 5-hour, 7-day, and Extra Usage/credits information
 - Add a Codex account by logging in to ChatGPT with the built-in browser
 - Claude-only users need no extra setup; the existing experience stays unchanged until a Codex account is added
+
+### 🪐 Antigravity Support
+
+- Monitor Google Antigravity's weekly quota (Gemini and third-party model groups) alongside Claude and Codex
+- **Google sign-in (recommended)** - Add one or more Antigravity accounts directly in Settings → Authentication; the credential is UsagePaceCC's own and keeps working across Antigravity app updates
+- **Antigravity app shortcut (optional)** - Reuse the sign-in already stored by the Antigravity app on this Mac instead, one account only, behind an explicit opt-in
+- The Google consent screen shown during sign-in displays **Antigravity's** branding rather than UsagePaceCC's — this is expected, because sign-in uses Antigravity's own OAuth client; UsagePaceCC never sees or stores your Google password
+- Claude/Codex-only users need no extra setup; the existing experience stays unchanged until an Antigravity account is added
 
 ### 🎨 Personalization
 
@@ -96,7 +105,7 @@ All platforms share the same usage quota, monitored in one place!
 ### 🔒 Security & Privacy
 
 - 🏠 **Local Storage Only** - All data stored locally only, never collect or upload any personal information
-- 🔐 **Keychain Protection** - Claude Session Key and Codex authentication token secured in Keychain, no plain text keys
+- 🔐 **Keychain Protection** - Claude Session Key, Codex authentication token, and Antigravity refresh tokens secured in Keychain, no plain text keys
 - 📖 **Open Source Transparency** - Code fully public, anyone can audit
 - 🛡️ **Sandbox Protection** - App Sandbox enabled for enhanced security
 

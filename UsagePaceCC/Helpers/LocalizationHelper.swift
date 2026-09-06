@@ -49,6 +49,17 @@ enum L {
         static var codexAccounts: String { localized("account.codex_accounts") }
         static var addCodexAccount: String { localized("account.add_codex_account") }
         static var codexCurrentAccount: String { localized("account.codex_current_account") }
+
+        /// Source label for an Antigravity account row. The wording must stay consistent
+        /// across the three places it appears — settings section header, account row, and the
+        /// source-preference control — so this wraps the same two `L.SettingsAuth` strings those
+        /// call sites already use, rather than introducing a fourth copy of the wording.
+        static func antigravitySourceLabel(_ source: AntigravitySource) -> String {
+            switch source {
+            case .oauth: return L.SettingsAuth.antigravityViaGoogle
+            case .keychain: return L.SettingsAuth.antigravityViaKeychain
+            }
+        }
     }
     
     // MARK: - Usage Detail View
@@ -71,6 +82,10 @@ enum L {
         static var refreshCooldown: String { localized("usage.refresh_cooldown") }
         static var runDiagnostic: String { localized("usage.run_diagnostic") }
         static var codexTitle: String { localized("usage.codex_title") }
+        /// Antigravity-only 时的 popover 头部标题；key 已在 `en.lproj/Localizable.strings`
+        /// 落地（fr/ja/ko/zh 回填仍是延后任务）。非英文语言缺失该 key 时并非原样退回 key，而是
+        /// 由 `localized(_:)` 回退到 en 文案（见其实现末尾的英文兜底）。
+        static var antigravityTitle: String { localized("usage.antigravity_title") }
     }
     
     // MARK: - Settings Tabs
@@ -124,7 +139,7 @@ enum L {
         static var hidePassword: String { localized("settings.auth.hide_password") }
         static var manualInputClaudeOnlyHelp: String { localized("settings.auth.manual_input_claude_only_help") }
 
-        // Codex Data Source section (dual-source picker, plan.md D8'/D9/D12/D13)
+        // Codex Data Source section (dual-source picker)
         static var codexSourceTitle: String { localized("settings.auth.codex_source_title") }
         static var codexSourceCli: String { localized("settings.auth.codex_source_cli") }
         static var codexSourceBrowser: String { localized("settings.auth.codex_source_browser") }
@@ -146,6 +161,47 @@ enum L {
         static var codexCliAccountChanged: String { localized("settings.auth.codex_cli_account_changed") }
         static var codexCliEnable: String { localized("settings.auth.codex_cli_enable") }
         static var codexCliDisable: String { localized("settings.auth.codex_cli_disable") }
+
+        // MARK: Antigravity section. Localized in all supported languages.
+        static var antigravitySectionTitle: String { localized("settings.auth.antigravity_section_title") }
+        static var antigravitySignInExplainer: String { localized("settings.auth.antigravity_sign_in_explainer") }
+        static var antigravitySignInButton: String { localized("settings.auth.antigravity_sign_in_button") }
+        static var antigravitySignInAnother: String { localized("settings.auth.antigravity_sign_in_another") }
+        static var antigravitySignInWaiting: String { localized("settings.auth.antigravity_sign_in_waiting") }
+        static var antigravitySignInExchanging: String { localized("settings.auth.antigravity_sign_in_exchanging") }
+        static var antigravitySignInResolving: String { localized("settings.auth.antigravity_sign_in_resolving") }
+        static func antigravitySignInSuccess(_ email: String) -> String {
+            String(format: localized("settings.auth.antigravity_sign_in_success"), email)
+        }
+        static var antigravitySignInSuccessNoEmail: String { localized("settings.auth.antigravity_sign_in_success_no_email") }
+        static var antigravitySignInIdentityUnconfirmed: String { localized("settings.auth.antigravity_sign_in_identity_unconfirmed") }
+        static var antigravitySignInCancel: String { localized("settings.auth.antigravity_sign_in_cancel") }
+        static var antigravitySignInReopen: String { localized("settings.auth.antigravity_sign_in_reopen") }
+        static var antigravitySignInClose: String { localized("settings.auth.antigravity_sign_in_close") }
+        static var antigravitySignInWindowTitle: String { localized("settings.auth.antigravity_sign_in_window_title") }
+        static var antigravityViaGoogle: String { localized("settings.auth.antigravity_via_google") }
+        static var antigravityViaKeychain: String { localized("settings.auth.antigravity_via_keychain") }
+        static var antigravitySignOut: String { localized("settings.auth.antigravity_sign_out") }
+        static var antigravityKeychainRowTitle: String { localized("settings.auth.antigravity_keychain_row_title") }
+        static var antigravityKeychainRowHint: String { localized("settings.auth.antigravity_keychain_row_hint") }
+        static var antigravityKeychainEnable: String { localized("settings.auth.antigravity_keychain_enable") }
+        static var antigravityKeychainConnect: String { localized("settings.auth.antigravity_keychain_connect") }
+        static var antigravityKeychainConnecting: String { localized("settings.auth.antigravity_keychain_connecting") }
+        static var antigravityKeychainNotConnected: String { localized("settings.auth.antigravity_keychain_not_connected") }
+        static var antigravityKeychainConnectHint: String { localized("settings.auth.antigravity_keychain_connect_hint") }
+        static var antigravityKeychainDisable: String { localized("settings.auth.antigravity_keychain_disable") }
+        static var antigravityKeychainReconnect: String { localized("settings.auth.antigravity_keychain_reconnect") }
+        static var antigravityKeychainReconnectReason: String { localized("settings.auth.antigravity_keychain_reconnect_reason") }
+        static var antigravityKeychainIdentityChangedReason: String { localized("settings.auth.antigravity_keychain_identity_changed_reason") }
+        static var antigravitySourcePreferenceTitle: String { localized("settings.auth.antigravity_source_preference_title") }
+        static var antigravitySourceOAuth: String { localized("settings.auth.antigravity_source_oauth") }
+        static var antigravitySourceKeychain: String { localized("settings.auth.antigravity_source_keychain") }
+        static var antigravityDedupeLine: String { localized("settings.auth.antigravity_dedupe_line") }
+        static var antigravityAccountsTitle: String { localized("settings.auth.antigravity_accounts_title") }
+        /// Plain-text body of the loopback "you can close this tab" page. Rendered directly
+        /// into a static HTML shell by `AntigravityLoopbackServer`, which does its own HTML-escaping —
+        /// this string itself must stay plain text, no markup, no interpolation.
+        static var antigravityBrowserPageBody: String { localized("settings.auth.antigravity_browser_page_body") }
     }
     
     // MARK: - Settings About
@@ -352,13 +408,43 @@ enum L {
         static var unauthorized: String { localized("error.unauthorized") }
         static var rateLimited: String { localized("error.rate_limited") }
 
-        // Codex dual-source errors (plan.md D9/D13) — wording is verbatim per phase-03, do not paraphrase
+        // Codex dual-source errors — wording is verbatim and must not be paraphrased
         static var codexCLIExpiredPopover: String { localized("error.codex_cli_expired_popover") }
         static var codexCLIExpiredAuthTab: String { localized("error.codex_cli_expired_auth_tab") }
         static var codexCLIInvalidPopover: String { localized("error.codex_cli_invalid_popover") }
         static var codexCLIInvalidAuthTab: String { localized("error.codex_cli_invalid_auth_tab") }
         static var codexBrowserExpiredPopover: String { localized("error.codex_browser_expired_popover") }
         static var codexBrowserExpiredAuthTab: String { localized("error.codex_browser_expired_auth_tab") }
+
+        // Antigravity dual-source errors — mirrors AntigravityAuthError / AntigravitySourceError.
+        // Some cases share a single string for both the popover and the Auth tab (the underlying
+        // Swift code returns the same text for both call sites); those expose only a `*Popover`
+        // accessor, which callers reuse for the Auth tab spot too.
+        static var antigravityKeychainNotFoundPopover: String { localized("error.antigravity_keychain_not_found_popover") }
+        static var antigravityKeychainNotFoundAuthTab: String { localized("error.antigravity_keychain_not_found_auth_tab") }
+        static var antigravityKeychainAccessDeniedPopover: String { localized("error.antigravity_keychain_access_denied_popover") }
+        static var antigravityKeychainEntitlementMissingPopover: String { localized("error.antigravity_keychain_entitlement_missing_popover") }
+        static var antigravityKeychainAccessDeniedAuthTab: String { localized("error.antigravity_keychain_access_denied_auth_tab") }
+        static var antigravityKeychainMalformedPopover: String { localized("error.antigravity_keychain_malformed_popover") }
+        static var antigravityNoAccessTokenPopover: String { localized("error.antigravity_no_access_token_popover") }
+        static var antigravityKeychainMalformedAuthTab: String { localized("error.antigravity_keychain_malformed_auth_tab") }
+        static var antigravityKeychainNotConnectedPopover: String { localized("error.antigravity_keychain_not_connected_popover") }
+        static var antigravityKeychainNotConnectedAuthTab: String { localized("error.antigravity_keychain_not_connected_auth_tab") }
+        static var antigravitySignInCancelledPopover: String { localized("error.antigravity_signin_cancelled_popover") }
+        static var antigravitySignInAlreadyInProgressPopover: String { localized("error.antigravity_signin_already_in_progress_popover") }
+        static var antigravityLoopbackFailedPopover: String { localized("error.antigravity_loopback_failed_popover") }
+        static var antigravityStateMismatchPopover: String { localized("error.antigravity_state_mismatch_popover") }
+        static var antigravityCodeExchangeFailedPopover: String { localized("error.antigravity_code_exchange_failed_popover") }
+        static var antigravityRefreshTokenRevokedPopover: String { localized("error.antigravity_refresh_token_revoked_popover") }
+        static var antigravityRefreshTokenRevokedAuthTab: String { localized("error.antigravity_refresh_token_revoked_auth_tab") }
+        static var antigravitySecretsUnavailablePopover: String { localized("error.antigravity_secrets_unavailable_popover") }
+        static var antigravityExpiredUnrefreshablePopover: String { localized("error.antigravity_expired_unrefreshable_popover") }
+        static var antigravityExpiredUnrefreshableAuthTab: String { localized("error.antigravity_expired_unrefreshable_auth_tab") }
+        static var antigravitySubscriptionRequiredPopover: String { localized("error.antigravity_subscription_required_popover") }
+        static var antigravitySubscriptionRequiredAuthTab: String { localized("error.antigravity_subscription_required_auth_tab") }
+        static var antigravityUsageUnauthorizedPopover: String { localized("error.antigravity_usage_unauthorized_popover") }
+        static var antigravityUsageUnauthorizedAuthTab: String { localized("error.antigravity_usage_unauthorized_auth_tab") }
+        static var antigravityUsageRateLimitedPopover: String { localized("error.antigravity_usage_rate_limited_popover") }
     }
 
     // MARK: - Diagnostics
@@ -430,8 +516,15 @@ enum L {
         static var codexPrimary: String { localized("codex_primary_limit") }
         static var codexSecondary: String { localized("codex_secondary_limit") }
         static var codexExtraUsage: String { localized("codex_extra_usage") }
+        /// 静态本地化标签：`bucket 0 → Gemini`, `bucket 1 → 3P`。
+        /// Server 的 `group.displayName`（如 "Claude and GPT models"）只进 tooltip，不进这里——
+        /// 那个字符串字面包含 "Claude"，会跟同一弹窗里真正的 Claude 行混淆。
+        /// key 已在 `en.lproj/Localizable.strings` 落地（fr/ja/ko/zh 回填仍是延后任务）；
+        /// 非英文语言缺失该 key 时由 `localized(_:)` 回退到 en 文案，而非原样退回 key。
+        static var antigravityPrimary: String { localized("antigravity_primary_limit") }
+        static var antigravitySecondary: String { localized("antigravity_secondary_limit") }
 
-        /// Window-derived Codex legend label (P05). Never trust `.codexPrimary`'s hardcoded
+        /// Window-derived Codex legend label. Never trust `.codexPrimary`'s hardcoded
         /// "Codex 5-Hour Limit" for a window whose actual length is unknown — this account has been
         /// observed with `limit_window_seconds = 604800` (7 days) on the *primary* window.
         /// - Parameter windowSeconds: seconds from `CodexUsageData.LimitData.windowSeconds`, nil-safe.

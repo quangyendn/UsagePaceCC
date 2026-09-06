@@ -70,10 +70,13 @@ extension UsageDetailView {
             codexUsageData: codexUsageData,
             activeDisplayTypes: UserSettings.shared.getActiveDisplayTypes(
                 usageData: usageData,
-                codexUsageData: codexUsageData
+                codexUsageData: codexUsageData,
+                hasAntigravityPrimary: hasAntigravityPrimary,
+                hasAntigravitySecondary: hasAntigravitySecondary
             ),
             isRefreshing: refreshState.isRefreshing,
-            claudeSnapshots: claudeSnapshots
+            claudeSnapshots: claudeSnapshots,
+            antigravitySnapshots: antigravitySnapshots
         )
         .frame(height: 114)
         .contentShape(Rectangle())

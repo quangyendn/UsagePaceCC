@@ -43,6 +43,16 @@ enum ImageHelper {
         createSquareIcon(named: "CodexIcon", size: size, isTemplate: false, sourceInset: 2)
     }
 
+    // MARK: - Antigravity Icon
+
+    /// 创建 Antigravity 品牌图标（非模板模式）。
+    /// - Note: `AntigravityIcon` 资源已加入 Asset Catalog。若该资产日后缺失，
+    ///   `NSImage(named:)` 会返回 nil，`createSquareIcon` 随之返回 nil，调用方（Auth 设置页/
+    ///   菜单栏渲染器）已各自有 `?? createSimpleCircleIcon()` 之类的兜底，不会崩溃。
+    static func createAntigravityIcon(size: CGFloat) -> NSImage? {
+        createSquareIcon(named: "AntigravityIcon", size: size, isTemplate: false, sourceInset: 2)
+    }
+
     /// 从资源中创建正方形图标。部分透明 PNG 的边缘 RGB 不是透明白，
     /// 直接缩放时会被 AppKit 采样成细暗线，因此这里先居中裁方并略微内收。
     static func createSquareIcon(named name: String, size: CGFloat, isTemplate: Bool, sourceInset: CGFloat = 0) -> NSImage? {

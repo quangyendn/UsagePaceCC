@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Antigravity usage monitoring**: Track Google Antigravity weekly quota (Gemini and third-party model groups) with remaining percentage, reset countdown, pace graph points and a dedicated menu bar glyph
+- **Sign in to Antigravity with Google**: Connect one or more Antigravity accounts directly in UsagePaceCC — no dependency on the Antigravity app staying signed in
+- **Antigravity app shortcut**: Optionally reuse the sign-in from the Antigravity app on this Mac, behind an explicit opt-in — nothing is read or sent until you enable it
+
+### Changed
+- Menu bar and popover now compose provider groups dynamically instead of a fixed Claude/Codex pair
+
 ## [3.0.0] - 2026-05-03
 
 ### Added

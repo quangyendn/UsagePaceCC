@@ -94,6 +94,45 @@ class SensitiveDataRedactor {
             )
         }
 
+        sanitized = redactGoogleOAuthTokens(sanitized)
+
+        return sanitized
+    }
+
+    /// 脱敏 Google OAuth 相关的敏感字面量（Antigravity 双来源认证专用）
+    /// 覆盖：`ya29.` access token、`1//` refresh token、`GOCSPX-` client secret、
+    /// 授权码（`code=` 查询参数）、PKCE code_verifier。
+    /// - Note: 这些模式与 Claude/Codex 的 session key 形状完全不同，独立成一段，
+    ///   避免和上面几段正则互相干扰。
+    private static func redactGoogleOAuthTokens(_ text: String) -> String {
+        var sanitized = text
+
+        let patterns: [(pattern: String, template: String)] = [
+            // access_token：ya29. 开头
+            ("ya29\\.[A-Za-z0-9_-]{10,}", "ya29.***REDACTED***"),
+            // refresh_token：1// 开头
+            ("1//[A-Za-z0-9_-]{10,}", "1//***REDACTED***"),
+            // client_secret：GOCSPX- 开头
+            ("GOCSPX-[A-Za-z0-9_-]{10,}", "GOCSPX-***REDACTED***"),
+            // 授权码：code=xxx 查询参数或 JSON 字段。Google 的授权码形如 `4/0AeanS0...`，
+            // 字符集必须包含 `/`；查询参数的前导符可以是 `?`（首个参数）、`&`，也可能完全没有
+            // 前导符（日志行开头就是 `code=...`）或前面只是空白（纯 lookbehind 强制要求
+            // `"`/`'`/`&`/`?` 之一，会导致行首或空白分隔的 `code=`/`code_verifier=` 漏网）。
+            // 用捕获组模板替换而不是纯 lookbehind，避免因为放宽前导符集合而误伤其它无关文本。
+            ("(^|[\\s\"'&?])code[\"']?[=:]\\s?[\"']?[A-Za-z0-9._/-]{10,}", "$1code=***REDACTED***"),
+            // code_verifier：JSON / query 字段
+            ("(^|[\\s\"'&?])code_verifier[\"']?[=:]\\s?[\"']?[A-Za-z0-9._~-]{20,}", "$1code_verifier=***REDACTED***"),
+            // JWT（如 Google `id_token`）：三段 base64url，以 `eyJ` 开头 —— 纵深防御，
+            // 调用方本不应把整段 id_token 落日志，这里作为兜底
+            ("eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+", "***REDACTED_JWT***")
+        ]
+
+        for (pattern, template) in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { continue }
+            let range = NSRange(sanitized.startIndex..., in: sanitized)
+            sanitized = regex.stringByReplacingMatches(in: sanitized, options: [], range: range, withTemplate: template)
+        }
+
         return sanitized
     }
 }

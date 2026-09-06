@@ -14,26 +14,33 @@ import OSLog
 /// Y-axis: Usage percentage (0-100%)
 struct LinearUsageGraphView: View {
     let usageData: UsageData?
-    /// Codex usage data (P05). Defaulted nil so existing/preview call sites keep compiling unchanged.
+    /// Codex usage data. Defaulted nil so existing/preview call sites keep compiling unchanged.
     let codexUsageData: CodexUsageData?
     let activeDisplayTypes: [LimitType]
     let isRefreshing: Bool
-    /// All saved Claude accounts (P03). Drives the new per-account 5h/7d chart points; empty array
+    /// All saved Claude accounts. Drives the new per-account 5h/7d chart points; empty array
     /// keeps existing/preview call sites compiling unchanged (no account-driven points drawn).
     let claudeSnapshots: [AccountUsageSnapshot]
+    /// All saved Antigravity accounts, same shape/role as `claudeSnapshots`. Bucket 0 → the
+    /// `fiveHour` slot (outline marker), bucket 1 → `sevenDay` slot (filled marker) — slot names,
+    /// not semantics (see `AccountUsageSnapshot.antigravitySnapshot`). Empty array keeps
+    /// existing/preview call sites compiling unchanged.
+    let antigravitySnapshots: [AccountUsageSnapshot]
 
     init(
         usageData: UsageData?,
         codexUsageData: CodexUsageData? = nil,
         activeDisplayTypes: [LimitType],
         isRefreshing: Bool,
-        claudeSnapshots: [AccountUsageSnapshot] = []
+        claudeSnapshots: [AccountUsageSnapshot] = [],
+        antigravitySnapshots: [AccountUsageSnapshot] = []
     ) {
         self.usageData = usageData
         self.codexUsageData = codexUsageData
         self.activeDisplayTypes = activeDisplayTypes
         self.isRefreshing = isRefreshing
         self.claudeSnapshots = claudeSnapshots
+        self.antigravitySnapshots = antigravitySnapshots
     }
 
     /// Legacy `LimitType`s still rendered via the old single-account `resolve(_:)` path (P03 scope
@@ -53,7 +60,7 @@ struct LinearUsageGraphView: View {
     /// One resolved point, provider-agnostic. Both Claude (`usageData`) and Codex (`codexUsageData`)
     /// funnel through `resolve(_:)` into this shape so drawing code never branches on provider again.
     private struct ResolvedPoint {
-        /// How the dot is drawn (P03). `.legacy` preserves today's filled-dot-with-white-border look
+        /// How the dot is drawn. `.legacy` preserves today's filled-dot-with-white-border look
         /// (still used by `legacyLimitTypes`); `.outline`/`.filled` are the new account-driven markers
         /// (5h = outline ring, 7d = filled ring), both colored from `AccountColor` rather than percentage.
         enum MarkerStyle {
@@ -86,7 +93,16 @@ struct LinearUsageGraphView: View {
 
     var body: some View {
         ZStack {
-            if (usageData != nil || codexUsageData != nil), !isRefreshing {
+            // Exact presence test rather than `!antigravitySnapshots.isEmpty`:
+            // an Antigravity account that has *never* succeeded still produces a snapshot
+            // with `fiveHour`/`sevenDay` both nil (just carrying `errorMessage`) so the array isn't
+            // empty — `!isEmpty` would draw the full chart canvas with zero plottable dots instead
+            // of falling through to the loading/empty state below. Matches how
+            // `hasAntigravityPrimary`/`hasAntigravitySecondary` are already computed
+            // (`MenuBarManager.swift`).
+            if (usageData != nil || codexUsageData != nil
+                    || antigravitySnapshots.contains(where: { $0.fiveHour != nil || $0.sevenDay != nil })),
+               !isRefreshing {
                 // Graph content
                 Canvas { context, size in
                     let drawArea = CGRect(
@@ -179,7 +195,7 @@ struct LinearUsageGraphView: View {
         // Reset per-draw; Canvas closures re-run on every redraw so this never leaks across frames.
         var drawnLabelRects: [CGRect] = []
 
-        // New (P03): per-account 5h/7d (+ Codex primary, wrapped) points, colored by `AccountColor`.
+        // New : per-account 5h/7d (+ Codex primary, wrapped) points, colored by `AccountColor`.
         drawAccountPoints(context: context, in: rect, drawnLabelRects: &drawnLabelRects)
 
         // Legacy (unchanged by P03): remaining single-account limit types still drive their dot from
@@ -222,7 +238,7 @@ struct LinearUsageGraphView: View {
         }
     }
 
-    /// Build and draw the new account-driven points (P03): 2 per saved Claude account (5h outline,
+    /// Build and draw the new account-driven points : 2 per saved Claude account (5h outline,
     /// 7d filled) plus 1 for Codex's wrapped single-account snapshot (primary, outline). Both windows
     /// are skipped per-account/window when their `WindowUsage?` is nil, matching today's behavior of
     /// not showing a dot for a window with no data.
@@ -302,6 +318,40 @@ struct LinearUsageGraphView: View {
             ))
         }
 
+        // Antigravity : a collection, byte-for-byte analogue of the Claude loop above (not
+        // Codex's single-value wrapper block) — the OAuth source is multi-account. Weekly windows
+        // (604800s) land in the `fiveHour` slot without any axis change: X is normalized elapsed
+        // fraction, not absolute time, so a 5h window and a 7d window already share the same axis
+        // today via Claude's fiveHour/sevenDay. No `fallbackWindowSeconds` here — Antigravity's
+        // window length is data-driven (`AntigravityWindow.seconds(for:)`), never guessed, same
+        // discipline as Codex.
+        for snapshot in antigravitySnapshots {
+            if let fiveHour = snapshot.fiveHour, activeDisplayTypes.contains(.antigravityPrimary),
+               fiveHour.resetsAt == nil || (fiveHour.windowSeconds ?? 0) > 0 {
+                points.append(ResolvedPoint(
+                    percentage: fiveHour.percentage,
+                    resetsAt: fiveHour.resetsAt,
+                    windowSeconds: fiveHour.windowSeconds,
+                    color: snapshot.color.swiftUIColor,
+                    accountId: snapshot.accountId,
+                    markerStyle: .outline,
+                    fallbackWindowSeconds: nil
+                ))
+            }
+            if let sevenDay = snapshot.sevenDay, activeDisplayTypes.contains(.antigravitySecondary),
+               sevenDay.resetsAt == nil || (sevenDay.windowSeconds ?? 0) > 0 {
+                points.append(ResolvedPoint(
+                    percentage: sevenDay.percentage,
+                    resetsAt: sevenDay.resetsAt,
+                    windowSeconds: sevenDay.windowSeconds,
+                    color: snapshot.color.swiftUIColor,
+                    accountId: snapshot.accountId,
+                    markerStyle: .filled,
+                    fallbackWindowSeconds: nil
+                ))
+            }
+        }
+
         for resolved in points {
             let xNormalized = calculateAccountElapsedRatio(
                 resetsAt: resolved.resetsAt,
@@ -325,7 +375,7 @@ struct LinearUsageGraphView: View {
     /// Draw a single account-driven marker: `.outline` (5h) is a stroked ring with no fill, `.filled`
     /// (7d) is a filled circle with a white border (same look as the legacy dot). Both get a red
     /// warning ring overlay on top when `UsageColorScheme.isNearLimit` — the overlay carries urgency,
-    /// the base color still carries account identity (shared logic, coordinate with phase 05).
+    /// the base color still carries account identity (shared drawing logic across account types).
     private func drawAccountDot(context: GraphicsContext, at point: CGPoint, resolved: ResolvedPoint) {
         let dotRect = CGRect(
             x: point.x - dotRadius,
@@ -455,11 +505,11 @@ struct LinearUsageGraphView: View {
 
     /// Calculate the elapsed time ratio (0 = just started, 1 = about to reset)
     /// - Parameters:
-    ///   - resetsAt: absolute reset time, if known.
-    ///   - windowSeconds: data-driven window length (Codex, from `limit_window_seconds`). When present,
-    ///     this is authoritative and the static per-`limitType` table below is skipped entirely.
-    ///   - limitType: used only as a fallback lookup when `windowSeconds` is nil (e.g. Claude points,
-    ///     which do not carry a window length on `UsageData.LimitData`).
+    /// - resetsAt: absolute reset time, if known.
+    /// - windowSeconds: data-driven window length (Codex, from `limit_window_seconds`). When present,
+    /// this is authoritative and the static per-`limitType` table below is skipped entirely.
+    /// - limitType: used only as a fallback lookup when `windowSeconds` is nil (e.g. Claude points,
+    /// which do not carry a window length on `UsageData.LimitData`).
     private func calculateElapsedTimeRatio(
         resetsAt: Date?,
         windowSeconds: TimeInterval?,
@@ -485,6 +535,10 @@ struct LinearUsageGraphView: View {
             case .sevenDay, .opusWeekly, .sonnetWeekly, .extraUsage:
                 totalWindow = 7 * 24 * 3600  // 7 days in seconds
             case .codexPrimary, .codexSecondary, .codexExtraUsage:
+                return 0
+            case .antigravityPrimary, .antigravitySecondary:
+                // Antigravity 只走账户驱动路径（`accountId`/`markerStyle` 绘点，见下方 `resolve(_:)`
+                // 上的说明），`resolve(_:)` 恒不会为这两个 case 产出点，此分支不可达，同 Codex 一样返回 0。
                 return 0
             }
             Logger.api.debug("LinearUsageGraphView: falling back to static window table for \(limitType.rawValue, privacy: .public) (windowSeconds was nil)")
@@ -609,6 +663,10 @@ struct LinearUsageGraphView: View {
                 markerStyle: .legacy,
                 fallbackWindowSeconds: nil
             )
+        case .antigravityPrimary, .antigravitySecondary:
+            // Antigravity 只走按账户绘点的路径（`accountId`/`markerStyle`，与 Claude/Codex 一致），
+            // 不经过这条 legacy 单值 `resolve(_:)`；此分支不可达。
+            return nil
         }
     }
 }

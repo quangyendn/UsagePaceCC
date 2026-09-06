@@ -40,6 +40,7 @@
 - **🔔 用量通知** - 用量達到 90% 時發送警告通知，配額重置時發送重置通知
 - **👥 多帳戶管理** - 支援 Claude 多帳戶 / 同一帳戶多組織，也支援獨立的 Codex 帳戶管理與快速切換
 - **🧩 Codex 支援** - 可選的 Codex 用量監控；可單獨使用 Codex，也可與 Claude 並列顯示為雙欄視圖（在設定中新增 Codex 帳號即可啟用）
+- **🪐 Antigravity 支援** - 可選的 Google Antigravity 每週配額監控（Gemini 與第三方模型組）；使用 Google 登入（建議），或連接 Antigravity 應用程式自身的登入作為快速捷徑
 - **🌐 內建瀏覽器登入** - Claude 登入自動擷取 Session Key；Codex 透過內建瀏覽器登入 ChatGPT 取得認證資訊
 - **🎨 外觀設定** - 支援跟隨系統 / 淺色 / 深色三種外觀模式
 - **🕐 時間格式** - 支援系統預設 / 12小時制 / 24小時制
@@ -65,6 +66,14 @@
 - 支援 Codex 5小時、7天與額外用量/credits 資訊
 - 透過內建瀏覽器登入 ChatGPT 新增 Codex 帳戶
 - Claude-only 使用者無需額外設定；未新增 Codex 帳戶時介面保持原有體驗
+
+### 🪐 Antigravity 支援
+
+- 與 Claude、Codex 一起監控 Google Antigravity 的每週配額（Gemini 與第三方模型組）
+- **Google 登入（建議）** - 在設定 → 認證中直接新增一個或多個 Antigravity 帳戶；憑證歸屬 UsagePaceCC 自身，在 Antigravity 應用程式更新後仍可繼續使用
+- **Antigravity 應用程式捷徑（選用）** - 改為重複使用這台 Mac 上 Antigravity 應用程式已儲存的登入資訊，僅限單一帳戶，需明確啟用
+- 登入過程中出現的 Google 同意畫面會顯示 **Antigravity** 的品牌，而非 UsagePaceCC——這是預期行為，因為登入使用的是 Antigravity 自身的 OAuth 客戶端；UsagePaceCC 不會看到或儲存你的 Google 密碼
+- 僅使用 Claude/Codex 的使用者無需額外設定；未新增 Antigravity 帳戶時介面保持原有體驗
 
 ### 🎨 個人化
 
@@ -96,7 +105,7 @@
 ### 🔒 安全與隱私
 
 - 🏠 **僅本機儲存** - 所有資料僅儲存在本機，絕不收集和上傳任何個人資訊
-- 🔐 **Keychain 保護** - Claude Session Key 與 Codex 認證權杖使用 Keychain 儲存，無明文金鑰
+- 🔐 **Keychain 保護** - Claude Session Key、Codex 認證權杖與 Antigravity 重新整理權杖均使用 Keychain 儲存，無明文金鑰
 - 📖 **開源透明** - 程式碼完全公開，任何人都可稽核
 - 🛡️ **Sandbox 防護** - 啟用 App Sandbox，增強安全性
 

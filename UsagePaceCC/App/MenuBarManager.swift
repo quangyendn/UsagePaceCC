@@ -70,10 +70,13 @@ class MenuBarManager: ObservableObject {
     @Published var hasAvailableUpdate = false
     /// 最新版本号（从 dataManager 同步）
     @Published var latestVersion: String?
-    /// 所有已保存的 Claude 账户快照（从 dataManager 同步，P03 code-review fix 1）：
+    /// 所有已保存的 Claude 账户快照（从 dataManager 同步）：
     /// 与 usageData/codexUsageData/errorMessage 走同一套 Combine 同步 + Binding 机制，
     /// 保证 popover 打开后异步刷新落地时这份数据也能跟着更新，而不是构造时的一次性快照。
     @Published var claudeSnapshots: [AccountUsageSnapshot] = []
+    /// 所有已保存的 Antigravity 账户快照（从 dataManager 同步），同 `claudeSnapshots` 的
+    /// Combine 同步 + Binding 机制。
+    @Published var antigravitySnapshots: [AccountUsageSnapshot] = []
     /// 用户已确认的版本号（点击检查更新后记录）
     private var acknowledgedVersion: String?
 
@@ -134,6 +137,38 @@ class MenuBarManager: ObservableObject {
 
         dataManager.$claudeSnapshots
             .assign(to: &$claudeSnapshots)
+
+        dataManager.$antigravitySnapshots
+            .assign(to: &$antigravitySnapshots)
+
+        // Antigravity 是多账户，`updateMenuBarIcon()` 只读"当前选中账户"那一份数据
+        // （见 `MenuBarUI.updateMenuBarIcon`），因此这里需要在 `antigravityUsageByAccount`
+        // 任一账户的数据更新时都重绘一次——不止是选中账户变化时（同 `usageData`/`codexUsageData`
+        // 的既有订阅方式，保持一致）。
+        dataManager.$antigravityUsageByAccount
+            .sink { [weak self] _ in
+                self?.updateMenuBarIcon()
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Antigravity provider 级错误行文案；具体"是否要真的显示成一行"的判断在
+    /// `PopoverLayout.rowCount`/`legendItems`，这里只是把 `dataManager` 上的同名计算属性
+    /// 透传出来供 `UsageDetailView` 的 Binding 使用（同 `shouldShowUpdateBadge` 的只读 Binding 写法）。
+    var antigravityErrorMessage: String? {
+        dataManager.antigravityProviderErrorMessage
+    }
+
+    /// 智能模式下 Antigravity primary/secondary 类型是否要显示：跨全部已拉取
+    /// 账户合并判断——只要**任意**账户具备该槽位就为 true，喂给
+    /// `UserSettings.getActiveDisplayTypes(hasAntigravityPrimary:hasAntigravitySecondary:)`。
+    /// 取代原先合成一个 nondeterministic `AntigravityUsageData` 代表值的做法；真正的多账户
+    /// 渲染数据始终走 `antigravitySnapshots`，不受这两个布尔影响。
+    var hasAntigravityPrimary: Bool {
+        dataManager.antigravitySnapshots.contains { $0.fiveHour != nil }
+    }
+    var hasAntigravitySecondary: Bool {
+        dataManager.antigravitySnapshots.contains { $0.sevenDay != nil }
     }
     
     /// 处理菜单栏图标点击事件
@@ -276,7 +311,7 @@ class MenuBarManager: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // 监听 Codex 来源（CLI / Browser）切换，立即用新来源重新拉取，而不是等待下一个刷新周期（见 plan.md D9）
+        // 监听 Codex 来源（CLI / Browser）切换，立即用新来源重新拉取，而不是等待下一个刷新周期
         settings.$codexSource
             .dropFirst()
             .removeDuplicates()
@@ -363,6 +398,22 @@ class MenuBarManager: ObservableObject {
             claudeSnapshots: Binding(
                 get: { self.claudeSnapshots },
                 set: { self.claudeSnapshots = $0 }
+            ),
+            antigravitySnapshots: Binding(
+                get: { self.antigravitySnapshots },
+                set: { self.antigravitySnapshots = $0 }
+            ),
+            hasAntigravityPrimary: Binding(
+                get: { self.hasAntigravityPrimary },
+                set: { _ in }
+            ),
+            hasAntigravitySecondary: Binding(
+                get: { self.hasAntigravitySecondary },
+                set: { _ in }
+            ),
+            antigravityErrorMessage: Binding(
+                get: { self.antigravityErrorMessage },
+                set: { _ in }
             )
         ))
 
@@ -379,7 +430,11 @@ class MenuBarManager: ObservableObject {
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
             claudeSnapshots: dataManager.claudeSnapshots,
-            codexAccount: settings.currentCodexAccount
+            codexAccount: settings.currentCodexAccount,
+            hasAntigravityPrimary: hasAntigravityPrimary,
+            hasAntigravitySecondary: hasAntigravitySecondary,
+            antigravitySnapshots: dataManager.antigravitySnapshots,
+            antigravityErrorMessage: dataManager.antigravityProviderErrorMessage
         )
         return NSSize(width: PopoverLayout.width, height: PopoverLayout.height(rowCount: rowCount))
     }
@@ -423,7 +478,7 @@ class MenuBarManager: ObservableObject {
         dataManager.startRefreshing()
     }
 
-    /// 幂等地确保有凭据时定时刷新处于运行状态；若定时器已在运行则不重复启动（见 Phase 04）
+    /// 幂等地确保有凭据时定时刷新处于运行状态；若定时器已在运行则不重复启动
     func ensureRefreshingIfCredentialed() {
         guard settings.hasAnyValidCredentials else { return }
         dataManager.startRefreshingIfNeeded()
@@ -462,6 +517,12 @@ class MenuBarManager: ObservableObject {
     @objc func switchCodexAccount(_ sender: NSMenuItem) {
         guard let account = sender.representedObject as? Account else { return }
         settings.switchToCodexAccount(account)
+    }
+
+    /// 切换 Antigravity 账户；镜像 `switchCodexAccount`。
+    @objc func switchAntigravityAccount(_ sender: NSMenuItem) {
+        guard let account = sender.representedObject as? Account else { return }
+        settings.switchToAntigravityAccount(account)
     }
 
     @objc func checkForUpdates() {
@@ -564,7 +625,19 @@ class MenuBarManager: ObservableObject {
 
     /// 更新菜单栏图标
     private func updateMenuBarIcon() {
-        ui.updateMenuBarIcon(usageData: usageData, codexUsageData: codexUsageData, claudeSnapshots: claudeSnapshots, hasUpdate: hasAvailableUpdate, shouldShowBadge: shouldShowUpdateBadge)
+        ui.updateMenuBarIcon(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            claudeSnapshots: claudeSnapshots,
+            // `?? UUID()` 每次都会分配一个全新、恒定查不到的随机 key——
+            // `flatMap` 让 `currentAntigravityAccountId == nil` 时直接短路成 nil，不必造一个
+            // 注定 miss 的字典查询。
+            antigravityUsageData: settings.currentAntigravityAccountId.flatMap { dataManager.antigravityUsageByAccount[$0] },
+            hasAntigravityPrimary: hasAntigravityPrimary,
+            hasAntigravitySecondary: hasAntigravitySecondary,
+            hasUpdate: hasAvailableUpdate,
+            shouldShowBadge: shouldShowUpdateBadge
+        )
     }
     
     // MARK: - Cleanup

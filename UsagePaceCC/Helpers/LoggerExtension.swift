@@ -9,9 +9,14 @@
 
 import OSLog
 
-extension Logger {
+// nonisolated: `Logger` (and these static constants) are used from background queues by services
+// like `AntigravityCredentialStore` / `AntigravityLoopbackServer` / `AntigravityTokenProvider`,
+// which are themselves `nonisolated`. `Logger` is `Sendable`, so there is no
+// actual isolation requirement here — this just opts the extension out of the project-wide
+// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` default.
+nonisolated extension Logger {
     /// 应用的统一 subsystem 标识符
-    private static var subsystem = Bundle.main.bundleIdentifier ?? "com.quangyendn.usagepacecc"
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.quangyendn.usagepacecc"
 
     /// 菜单栏管理器日志
     /// 用于记录菜单栏、刷新、更新检查等相关操作

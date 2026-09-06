@@ -33,18 +33,21 @@ class MenuBarIconRenderer {
 
     /// 创建菜单栏图标
     /// - Parameters:
-    ///   - usageData: Claude 用量数据
-    ///   - codexUsageData: Codex 用量数据（nil 表示无 Codex 账号）
-    ///   - claudeSnapshots: 所有已保存 Claude 账户的用量快照（P05）；用于经
-    ///     `topUrgentAccounts` 选出最多 2 个最紧迫账户，渲染为账户组合图标（环+饼形扇区）。
-    ///     Codex 目前仍是单账户，图标渲染路径不受此参数影响。
-    ///   - hasUpdate: 是否有可用更新
-    ///   - button: 状态栏按钮（用于获取外观模式）
+    /// - usageData: Claude 用量数据
+    /// - codexUsageData: Codex 用量数据（nil 表示无 Codex 账号）
+    /// - claudeSnapshots: 所有已保存 Claude 账户的用量快照；用于经
+    /// `topUrgentAccounts` 选出最多 2 个最紧迫账户，渲染为账户组合图标（环+饼形扇区）。
+    /// Codex 目前仍是单账户，图标渲染路径不受此参数影响。
+    /// - hasUpdate: 是否有可用更新
+    /// - button: 状态栏按钮（用于获取外观模式）
     /// - Returns: 生成的图标图像
     func createIcon(
         usageData: UsageData?,
         codexUsageData: CodexUsageData? = nil,
         claudeSnapshots: [AccountUsageSnapshot] = [],
+        antigravityUsageData: AntigravityUsageData? = nil,
+        hasAntigravityPrimary: Bool = false,
+        hasAntigravitySecondary: Bool = false,
         hasUpdate: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
@@ -58,154 +61,207 @@ class MenuBarIconRenderer {
             isMonochrome = settings.iconStyleMode == .monochrome
         }
 
+        let hasCodex = codexUsageData != nil
+        // 自定义模式下的 0% 占位快照会在这里被注入；`hasAntigravity` 必须建立在占位注入之后，
+        // 否则「刚添加账户、尚未拉到数据」这一帧会被误判为「未配置」，图标短暂消失。
+        // `antigravityUsageData` 是 `settings.currentAntigravityAccountId` 对应的那一份
+        // （由 `MenuBarManager` 从 `antigravityUsageByAccount` 查出并传入——
+        // 没有跨账户合并的单值可用，菜单栏字形只反映当前选中账户，与账户子菜单切换保持一致）。
+        let antigravityRenderSnapshots = antigravityGlyphSnapshots(from: antigravityUsageData)
+        let hasAntigravity = !antigravityRenderSnapshots.isEmpty
+
+        // 三个 Provider 都没有可渲染内容时，保留旧有的默认图标兜底路径（未配置任何账号，
+        // 或 Claude 数据尚未加载完成且其余 Provider 也未激活）。
+        guard usageData != nil || hasCodex || hasAntigravity else {
+            let size = NSSize(width: 22, height: 22)
+            let defaultIcon: NSImage
+            if settings.iconDisplayMode == .none {
+                defaultIcon = createMenuBarDividerIcon(isMonochrome: isMonochrome)
+            } else {
+                defaultIcon = isMonochrome ?
+                    createCircleTemplateImage(percentage: 0, size: size, button: button, removeBackground: true) :
+                    createCircleImage(percentage: 0, size: size, button: button, removeBackground: true)
+            }
+            if hasUpdate { return addBadgeToImage(defaultIcon) }
+            return defaultIcon
+        }
+
+        let allTypes = settings.getActiveDisplayTypes(
+            usageData: usageData,
+            codexUsageData: codexUsageData,
+            hasAntigravityPrimary: hasAntigravityPrimary,
+            hasAntigravitySecondary: hasAntigravitySecondary
+        )
+
         var icon: NSImage
 
-        if let codex = codexUsageData {
-            // 有 Codex 数据路径
-            let allTypes = settings.getActiveDisplayTypes(usageData: usageData, codexUsageData: codex)
-            let codexTypes = allTypes.filter { $0.provider == .codex }
+        switch settings.iconDisplayMode {
+        case .none:
+            icon = createMenuBarDividerIcon(isMonochrome: isMonochrome)
 
-            if settings.isMultiProviderActive, let data = usageData {
-                // 双 Provider 模式
-                let claudeTypes = allTypes.filter { $0.provider == .claude }
-                icon = createMultiProviderIcon(data: data, codex: codex, claudeTypes: claudeTypes, codexTypes: codexTypes, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
-            } else {
-                // Codex-only（无 Claude 账号）或降级路径
-                icon = createCodexOnlyIcon(codex: codex, codexTypes: codexTypes, isMonochrome: isMonochrome, button: button)
-            }
-        } else {
-            // Claude-only 路径（原有逻辑）
-            guard let data = usageData else {
-                let size = NSSize(width: 22, height: 22)
-                let defaultIcon: NSImage
-                if settings.iconDisplayMode == .none {
-                    defaultIcon = createMenuBarDividerIcon(isMonochrome: isMonochrome)
-                } else {
-                    defaultIcon = isMonochrome ?
-                        createCircleTemplateImage(percentage: 0, size: size, button: button, removeBackground: true) :
-                        createCircleImage(percentage: 0, size: size, button: button, removeBackground: true)
-                }
-                if hasUpdate { return addBadgeToImage(defaultIcon) }
-                return defaultIcon
-            }
+        case .iconOnly:
+            icon = createIconOnlyIcon(
+                usageData: usageData,
+                hasCodex: hasCodex,
+                hasAntigravity: hasAntigravity,
+                isMonochrome: isMonochrome
+            )
 
-            let activeTypes = settings.getActiveDisplayTypes(usageData: data)
-
-            switch settings.iconDisplayMode {
-            case .percentageOnly:
-                icon = createCombinedPercentageIcon(data: data, types: activeTypes, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
-            case .iconOnly:
-                let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
-                if let iconCopy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) {
-                    icon = iconCopy
-                } else {
-                    icon = createSimpleCircleIcon()
-                }
-            case .both:
-                icon = createCombinedIconWithAppIcon(data: data, types: activeTypes, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
-            case .none:
-                icon = createMenuBarDividerIcon(isMonochrome: isMonochrome)
-            }
+        case .percentageOnly, .both:
+            icon = createGroupedIcon(
+                usageData: usageData,
+                codexUsageData: codexUsageData,
+                claudeSnapshots: claudeSnapshots,
+                antigravityRenderSnapshots: antigravityRenderSnapshots,
+                allTypes: allTypes,
+                isMonochrome: isMonochrome,
+                button: button
+            )
         }
 
         if hasUpdate { icon = addBadgeToImage(icon) }
         return icon
     }
 
-    // MARK: - Multi-Provider Icon Creation
+    // MARK: - Provider-Group Icon Creation 
+    //
+    // 取代原来的 Claude-only / Codex-only / multi 三条手写分支（每条都各自重复一遍
+    // `iconDisplayMode` 的 4 路 switch）：按 `settings.activeProviders` 顺序（Claude → Codex →
+    // Antigravity）组装每个 Provider 的指标图标分组，分隔线/品牌图标的插入规则从「Claude→Codex
+    // 之间插一次」泛化为「任意两个相邻的非空分组之间插一次」。`isMonochrome`/`hasUpdate` 仍然只在
+    // `createIcon` 里应用一次，不在分组循环内重复。
 
-    /// 双 Provider 模式图标：[Claude 品牌] + [Claude 指标] + [Codex 品牌] + [Codex 指标]
-    private func createMultiProviderIcon(
-        data: UsageData,
-        codex: CodexUsageData,
-        claudeTypes: [LimitType],
-        codexTypes: [LimitType],
-        claudeSnapshots: [AccountUsageSnapshot],
-        isMonochrome: Bool,
-        button: NSStatusBarButton?
-    ) -> NSImage {
+    /// `.iconOnly` 模式：只显示品牌图标，不显示任何指标字形。品牌图标的"该 Provider 是否出现"
+    /// 判据与 `.percentageOnly`/`.both` 保持一致——Claude 看 `usageData`、Codex 看
+    /// `codexUsageData`、Antigravity 看是否有可渲染的快照（含自定义模式下的占位快照）。
+    private func createIconOnlyIcon(usageData: UsageData?, hasCodex: Bool, hasAntigravity: Bool, isMonochrome: Bool) -> NSImage {
         var icons: [NSImage] = []
-
-        switch settings.iconDisplayMode {
-        case .iconOnly:
-            // 只显示品牌图标
-            let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
-            if let copy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) {
-                icons.append(copy)
-            }
-            if let codexBrand = createProviderBrandIcon(.codex, isMonochrome: isMonochrome, size: providerBrandIconSize) {
-                icons.append(codexBrand)
-            }
-
-        case .percentageOnly, .both:
-            // Claude 部分：5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
-            var claudeIcons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: claudeTypes.contains(.fiveHour), showSevenDay: claudeTypes.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
-            let remainingClaudeTypes = claudeTypes.filter { $0 != .fiveHour && $0 != .sevenDay }
-            claudeIcons.append(contentsOf: remainingClaudeTypes.compactMap { createIconForType($0, data: data, isMonochrome: isMonochrome, button: button) })
-            if !claudeIcons.isEmpty {
-                if settings.iconDisplayMode == .both {
-                    let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
-                    if let copy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) {
-                        icons.append(copy)
-                    }
+        for provider in settings.activeProviders {
+            switch provider {
+            case .claude:
+                guard usageData != nil else { continue }
+                let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
+                if let copy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) {
+                    icons.append(copy)
                 }
-                icons.append(contentsOf: claudeIcons)
-            }
-
-            // Codex 部分
-            let codexIcons = buildCodexIcons(codex: codex, types: codexTypes, isMonochrome: isMonochrome, button: button)
-            if !codexIcons.isEmpty {
-                if settings.iconDisplayMode == .percentageOnly, !claudeIcons.isEmpty {
-                    icons.append(createMenuBarDividerIcon(isMonochrome: isMonochrome))
-                } else if settings.iconDisplayMode == .both,
-                   let brand = createProviderBrandIcon(.codex, isMonochrome: isMonochrome, size: providerBrandIconSize) {
+            case .codex:
+                guard hasCodex else { continue }
+                if let brand = createProviderBrandIcon(.codex, isMonochrome: isMonochrome, size: providerBrandIconSize) {
                     icons.append(brand)
                 }
-                icons.append(contentsOf: codexIcons)
+            case .antigravity:
+                guard hasAntigravity else { continue }
+                if let brand = createProviderBrandIcon(.antigravity, isMonochrome: isMonochrome, size: providerBrandIconSize) {
+                    icons.append(brand)
+                }
             }
-
-        case .none:
-            // 不显示图标：仅显示轻量分隔线，保留可点击的状态栏锚点
-            icons.append(createMenuBarDividerIcon(isMonochrome: isMonochrome))
         }
 
-        let combined = icons.isEmpty ? createSimpleCircleIcon() : combineIcons(icons, spacing: 2.0, height: metricIconSize)
-        combined.isTemplate = isMonochrome
-        return combined
+        let icon: NSImage
+        if icons.isEmpty {
+            icon = createSimpleCircleIcon()
+        } else if icons.count == 1 {
+            // 单 Provider 时直接返回该品牌图标本身，保持旧有的 Claude-only/Codex-only 行为
+            // （不经过 `combineIcons` 重新铺一张画布）。
+            icon = icons[0]
+        } else {
+            icon = combineIcons(icons, spacing: settings.isMultiProviderActive ? 2.0 : 3.0, height: metricIconSize)
+        }
+        icon.isTemplate = isMonochrome
+        return icon
     }
 
-    /// Codex-only 模式图标（无 Claude 账号时）
-    private func createCodexOnlyIcon(
-        codex: CodexUsageData,
-        codexTypes: [LimitType],
+    /// `.percentageOnly`/`.both` 模式：按 Provider 分组组装指标图标 + （`.both` 下的）品牌图标，
+    /// 组与组之间在 `.percentageOnly` 下插入一条分隔线（`.both` 下用品牌图标本身分隔，不需要
+    /// 额外分隔线）。
+    private func createGroupedIcon(
+        usageData: UsageData?,
+        codexUsageData: CodexUsageData?,
+        claudeSnapshots: [AccountUsageSnapshot],
+        antigravityRenderSnapshots: [AccountUsageSnapshot],
+        allTypes: [LimitType],
         isMonochrome: Bool,
         button: NSStatusBarButton?
     ) -> NSImage {
-        switch settings.iconDisplayMode {
-        case .none:
-            return createMenuBarDividerIcon(isMonochrome: isMonochrome)
+        var groups: [(provider: ProviderType, metrics: [NSImage])] = []
 
-        case .iconOnly:
-            return createProviderBrandIcon(.codex, isMonochrome: isMonochrome, size: providerBrandIconSize) ?? createSimpleCircleIcon()
+        for provider in settings.activeProviders {
+            switch provider {
+            case .claude:
+                guard let data = usageData else { continue }
+                let claudeTypes = allTypes.filter { $0.provider == .claude }
+                var claudeIcons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: claudeTypes.contains(.fiveHour), showSevenDay: claudeTypes.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
+                let remainingClaudeTypes = claudeTypes.filter { $0 != .fiveHour && $0 != .sevenDay }
+                claudeIcons.append(contentsOf: remainingClaudeTypes.compactMap { createIconForType($0, data: data, isMonochrome: isMonochrome, button: button) })
+                groups.append((.claude, claudeIcons))
 
-        case .percentageOnly, .both:
-            var icons: [NSImage] = []
-            if settings.iconDisplayMode == .both,
-               let brand = createProviderBrandIcon(.codex, isMonochrome: isMonochrome, size: providerBrandIconSize) {
-                icons.append(brand)
+            case .codex:
+                guard let codex = codexUsageData else { continue }
+                let codexTypes = allTypes.filter { $0.provider == .codex }
+                groups.append((.codex, buildCodexIcons(codex: codex, types: codexTypes, isMonochrome: isMonochrome, button: button)))
+
+            case .antigravity:
+                guard !antigravityRenderSnapshots.isEmpty else { continue }
+                let antigravityTypes = allTypes.filter { $0.provider == .antigravity }
+                groups.append((.antigravity, buildAntigravityIcons(snapshots: antigravityRenderSnapshots, types: antigravityTypes, isMonochrome: isMonochrome, button: button)))
             }
-            icons.append(contentsOf: buildCodexIcons(codex: codex, types: codexTypes, isMonochrome: isMonochrome, button: button))
-            if icons.isEmpty { return createSimpleCircleIcon() }
-            let combined = icons.count == 1 ? icons[0] : combineIcons(icons, spacing: 3.0, height: metricIconSize)
-            combined.isTemplate = isMonochrome
-            return combined
         }
+
+        var icons: [NSImage] = []
+        var previousGroupHadIcons = false
+        for group in groups {
+            if settings.iconDisplayMode == .both {
+                // `.both`：当活跃 Provider 不止一个时，只在该 Provider 分组确实有指标字形时才
+                // 附带品牌图标——这一段镜像旧的**多 Provider**路径（旧路径把品牌图标附加条件绑定
+                // 在 `group.metrics` 非空上），此前这里对 `groups` 里的每个 Provider 都无条件附加
+                // 品牌图标，只要该 Provider 处于活跃状态（如 Claude+Codex 用户在 `.custom` 模式下
+                // 只勾了 Claude 的类型），就会给没有任何指标字形的 Codex 凭空画一个孤零零的品牌
+                // 图标；旧代码的行为是"该分组有内容才出现"，必须保持像素级一致，否则已有用户的
+                // 菜单栏会变样。
+                // 但当只有**单一** Provider 活跃时，旧的单 Provider 路径
+                // （`createCombinedIconWithAppIcon`/`createCodexOnlyIcon`）无条件展示品牌图标，
+                // 即使一个指标字形都没有——`allIcons = [appIconCopy]` 先于任何指标图标被塞入，
+                // `icons.count == 1` 时直接返回那个"仅品牌图标"的单元素数组。对单 Provider 场景
+                // 套用多 Provider 的空分组守卫，会让"该 Provider 已选中但零个指标类型"（例如
+                // 用户只勾了 `.codexPrimary`，随后移除了唯一的 Codex 账户，只剩 Claude 且零个
+                // Claude 类型）落回 `icons.isEmpty` → 18×18 纯圆点，而不是旧版的品牌图标，
+                // 这会是一次可见的界面倒退。
+                if groups.count > 1 {
+                    guard !group.metrics.isEmpty else { continue }
+                }
+                if let brand = createProviderBrandIcon(group.provider, isMonochrome: isMonochrome, size: providerBrandIconSize) {
+                    icons.append(brand)
+                }
+                icons.append(contentsOf: group.metrics)
+            } else if settings.iconDisplayMode == .percentageOnly {
+                guard !group.metrics.isEmpty else { continue }
+                if previousGroupHadIcons {
+                    // 泛化后的分隔规则：任意两个相邻的非空分组之间插一条分隔线
+                    // （原代码是 Claude→Codex 之间的一次性 `if`，这里改为通用规则以支持任意
+                    // 数量的 Provider）。
+                    icons.append(createMenuBarDividerIcon(isMonochrome: isMonochrome))
+                }
+                icons.append(contentsOf: group.metrics)
+                previousGroupHadIcons = true
+            }
+        }
+
+        let icon: NSImage
+        if icons.isEmpty {
+            icon = createSimpleCircleIcon()
+        } else if icons.count == 1 {
+            icon = icons[0]
+        } else {
+            icon = combineIcons(icons, spacing: settings.isMultiProviderActive ? 2.0 : 3.0, height: metricIconSize)
+        }
+        icon.isTemplate = isMonochrome
+        return icon
     }
 
     /// 构建 Codex 指标图标列表
     /// - Note: `.codexPrimary`/`.codexSecondary`（5h/7d 等效窗口）与 Claude 共用同一套账户组合
-    ///   图标机制（`createAccountGlyphIcons`，外圈进度环 + 内圈饼形扇区，账户颜色渲染）；
-    ///   `.codexExtraUsage` 是独立的六边形形状，不受此统一影响，仍走 `createCodexIcon`。
+    /// 图标机制（`createAccountGlyphIcons`，外圈进度环 + 内圈饼形扇区，账户颜色渲染）；
+    /// `.codexExtraUsage` 是独立的六边形形状，不受此统一影响，仍走 `createCodexIcon`。
     private func buildCodexIcons(codex: CodexUsageData, types: [LimitType], isMonochrome: Bool, button: NSStatusBarButton?) -> [NSImage] {
         let showPlaceholder = settings.displayMode == .custom
 
@@ -270,6 +326,50 @@ class MenuBarIconRenderer {
         UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC") ?? UUID()
     }
 
+    /// 构建 Antigravity 指标图标列表。
+    /// - Note: 与 `buildCodexIcons` 不同——Antigravity 没有额度/信用等价物
+    /// （`retrieveUserQuotaSummary` 的响应里没有这个字段），所以这里只有一段：
+    /// 外圈进度环 + 内圈饼形扇区，走与 Claude/Codex 相同的账户组合图标机制
+    /// （`createAccountGlyphIcons`）。
+    private func buildAntigravityIcons(snapshots: [AccountUsageSnapshot], types: [LimitType], isMonochrome: Bool, button: NSStatusBarButton?) -> [NSImage] {
+        let showPrimary = types.contains(.antigravityPrimary)
+        let showSecondary = types.contains(.antigravitySecondary)
+        guard showPrimary || showSecondary else { return [] }
+        return createAccountGlyphIcons(from: snapshots, showFiveHour: showPrimary, showSevenDay: showSecondary, button: button, isMonochrome: isMonochrome)
+    }
+
+    /// 把「当前选中账户的那一份 `AntigravityUsageData`」包装成账户组合图标所需的 snapshot 数组
+    /// —— 与 `codexGlyphSnapshots` 同一形状（`DataRefreshManager` 没有导出跨账户合并的单值
+    /// `antigravityUsageData` 属性；菜单栏字形只反映
+    /// `settings.currentAntigravityAccountId` 选中的那个账户，与账户子菜单切换保持一致）。
+    /// `showPlaceholder`（自定义模式下账户尚无数据时）与
+    /// `codexGlyphSnapshots` 的占位行为一致。
+    private func antigravityGlyphSnapshots(from usage: AntigravityUsageData?) -> [AccountUsageSnapshot] {
+        let account = settings.currentAntigravityAccount
+        if let account, let snapshot = AccountUsageSnapshot.antigravitySnapshot(from: usage, account: account) {
+            return [snapshot]
+        }
+        // `account == nil` 意味着**没有任何** Antigravity 账户——这与 Codex 的等价占位路径不同：
+        // `codexGlyphSnapshots` 只能从 `buildCodexIcons` 内部到达，调用方早已保证
+        // `codexUsageData != nil`（也就是至少有一个 Codex 账户）；这里的 `antigravityGlyphSnapshots`
+        // 却是从 `createIcon` 顶层无条件调用的，用来计算 `hasAntigravity`。此前只要
+        // `displayMode == .custom` 就无条件伪造一个 0% 占位 snapshot，会让完全没有配置
+        // Antigravity 的用户在 Claude 数据尚未加载（启动瞬间）或持续报错、且没有 Codex 时，
+        // `hasAntigravity` 恒为 true，图标从旧的 22×22 0% 进度环兜底退化成 18×18 的
+        // `createSimpleCircleIcon()`。占位 snapshot 必须仅在
+        // "确实存在至少一个 Antigravity 账户，只是这个账户还没有可渲染的数据"时才出现。
+        guard let account, settings.displayMode == .custom else { return [] }
+        return [AccountUsageSnapshot(
+            accountId: account.id,
+            provider: .antigravity,
+            displayName: account.displayName,
+            color: account.color,
+            fiveHour: WindowUsage(percentage: 0, resetsAt: nil, windowSeconds: nil),
+            sevenDay: WindowUsage(percentage: 0, resetsAt: nil, windowSeconds: nil),
+            errorMessage: nil
+        )]
+    }
+
     /// 创建 Provider 品牌图标（用于多 Provider 模式下的视觉分组）
     private func createProviderBrandIcon(_ provider: ProviderType, isMonochrome: Bool, size: CGFloat = 14) -> NSImage? {
         switch provider {
@@ -279,66 +379,17 @@ class MenuBarIconRenderer {
         case .codex:
             let iconName = isMonochrome ? "CodexIconReverse" : "CodexIcon"
             return ImageHelper.createSquareIcon(named: iconName, size: size, isTemplate: isMonochrome, sourceInset: isMonochrome ? 0 : 2)
+        case .antigravity:
+            // `AntigravityIcon` / `AntigravityIconReverse` ship in the Asset Catalog.
+            // `createSquareIcon` still falls back to nil if the asset is ever missing;
+            // the caller (`createIcon`'s brand-icon grouping logic) already treats this as
+            // `if let brand = ...`, so a missing asset would just skip the brand icon (metric
+            // icons still render normally) rather than crash or show a placeholder.
+            let iconName = isMonochrome ? "AntigravityIconReverse" : "AntigravityIcon"
+            return ImageHelper.createSquareIcon(named: iconName, size: size, isTemplate: isMonochrome, sourceInset: isMonochrome ? 0 : 2)
         }
     }
 
-    /// 创建仅百分比的组合图标
-    private func createCombinedPercentageIcon(
-        data: UsageData,
-        types: [LimitType],
-        claudeSnapshots: [AccountUsageSnapshot],
-        isMonochrome: Bool,
-        button: NSStatusBarButton?
-    ) -> NSImage {
-        // 5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
-        var icons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: types.contains(.fiveHour), showSevenDay: types.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
-        let remainingTypes = types.filter { $0 != .fiveHour && $0 != .sevenDay }
-        icons.append(contentsOf: remainingTypes.compactMap { type in
-            createIconForType(type, data: data, isMonochrome: isMonochrome, button: button)
-        })
-
-        // 组合图标
-        if icons.isEmpty {
-            return createSimpleCircleIcon()
-        } else if icons.count == 1 {
-            return icons[0]
-        } else {
-            let combined = combineIcons(icons, spacing: 3.0, height: 18)
-            combined.isTemplate = isMonochrome
-            return combined
-        }
-    }
-
-    /// 创建 App 图标 + 百分比的组合图标
-    private func createCombinedIconWithAppIcon(
-        data: UsageData,
-        types: [LimitType],
-        claudeSnapshots: [AccountUsageSnapshot],
-        isMonochrome: Bool,
-        button: NSStatusBarButton?
-    ) -> NSImage {
-        // 获取 App 图标（单色模式使用反转图标）
-        let iconName = isMonochrome ? "AppIconReverse" : "AppIcon"
-        guard let appIconCopy = ImageHelper.createSquareIcon(named: iconName, size: providerBrandIconSize, isTemplate: isMonochrome) else {
-            return createCombinedPercentageIcon(data: data, types: types, claudeSnapshots: claudeSnapshots, isMonochrome: isMonochrome, button: button)
-        }
-
-        // 5h/7d 走账户组合图标（环+饼形扇区），其余类型（Opus/Sonnet/Extra）走原有 `createIconForType`
-        var percentageIcons = createAccountGlyphIcons(from: claudeSnapshots, showFiveHour: types.contains(.fiveHour), showSevenDay: types.contains(.sevenDay), button: button, isMonochrome: isMonochrome)
-        let remainingTypes = types.filter { $0 != .fiveHour && $0 != .sevenDay }
-        percentageIcons.append(contentsOf: remainingTypes.compactMap { type in
-            createIconForType(type, data: data, isMonochrome: isMonochrome, button: button)
-        })
-
-        // 组合 App 图标 + 百分比图标
-        var allIcons = [appIconCopy]
-        allIcons.append(contentsOf: percentageIcons)
-
-        let combined = combineIcons(allIcons, spacing: 3.0, height: metricIconSize)
-        combined.isTemplate = isMonochrome
-        return combined
-    }
-    
     // MARK: - Icon Drawing - Colored Mode (彩色模式)
 
     private func createCircleImage(percentage: Double, size: NSSize, colorOverride: NSColor? = nil, useDashedStyle: Bool = false, button: NSStatusBarButton?, removeBackground: Bool = false) -> NSImage {
@@ -426,16 +477,16 @@ class MenuBarIconRenderer {
         return image
     }
 
-    // MARK: - Shared Ring / Wedge Drawing Helpers (P05)
+    // MARK: - Shared Ring / Wedge Drawing Helpers 
 
     /// 提取自 `createCircleImage`/`createCircleTemplateImage` 的外圈弧线描边逻辑：
     /// 保留原有的圆头端点角度修正数学（cap-angle correction），供彩色/单色圆环
     /// 以及新的账户组合图标（`createAccountGlyph`）共用，避免重复实现。
     /// - Parameters:
-    ///   - rect: 图标绘制区域（正方形），圆心与半径均从此推导
-    ///   - percentage: 使用百分比 (0-100+)
-    ///   - color: 描边颜色
-    ///   - lineWidth: 描边宽度
+    /// - rect: 图标绘制区域（正方形），圆心与半径均从此推导
+    /// - percentage: 使用百分比 (0-100+)
+    /// - color: 描边颜色
+    /// - lineWidth: 描边宽度
     private func drawProgressRing(in rect: NSRect, percentage: Double, color: NSColor, lineWidth: CGFloat) {
         let center = NSPoint(x: rect.midX, y: rect.midY)
         let radius = min(rect.width, rect.height) / 2 - 2
@@ -474,9 +525,9 @@ class MenuBarIconRenderer {
 
     /// 绘制 7 天用量的内圈饼形扇区填充（取代旧的虚线圆环区分方式）。
     /// - Parameters:
-    ///   - rect: 扇区绘制区域，半径小于外圈进度环，以在环与扇区之间留出可视间隙
-    ///   - percentage: 使用百分比 (0-100+)；0% 时不绘制任何图形（无残留细线）
-    ///   - color: 填充颜色
+    /// - rect: 扇区绘制区域，半径小于外圈进度环，以在环与扇区之间留出可视间隙
+    /// - percentage: 使用百分比 (0-100+)；0% 时不绘制任何图形（无残留细线）
+    /// - color: 填充颜色
     private func drawPieWedge(in rect: NSRect, percentage: Double, color: NSColor) {
         guard percentage > 0 else { return }
 
@@ -521,7 +572,7 @@ class MenuBarIconRenderer {
 
     /// 提取自 `createCircleImage`/`createCircleTemplateImage` 的淡色背景「轨道」圆环：
     /// 在描边进度弧之前先画一圈完整的浅色圆，确保 0% 用量时图标仍是「一个可见的空心圆」，
-    /// 而不是几乎不可见的一个小点（P05 code review finding #5）。
+    /// 而不是几乎不可见的一个小点。
     /// `dashed` 复用 `createCircleImage`/`createCircleTemplateImage` 中既有的虚线约定
     /// （`useDashedStyle`/`useSevenDayStyle`），用于单色模式下以「实线 vs 虚线」区分同形状的
     /// 两个账户图标（因为单色模式下账户颜色不可用，无法再靠颜色区分身份）。
@@ -539,24 +590,24 @@ class MenuBarIconRenderer {
 
     /// 创建单个账户的组合图标：外圈 5h 进度环 + 内圈 7d 饼形扇区。
     /// 彩色模式下以账户颜色渲染（外观自适应亮度调整）；单色模式下改用 `NSColor.labelColor`
-    /// 绘制并将 `image.isTemplate = true`（P05 code review finding #3），以便随菜单栏浅色/深色/
+    /// 绘制并将 `image.isTemplate = true`，以便随菜单栏浅色/深色/
     /// 高亮状态反色；由于单色模式下无法再靠账户颜色区分身份，第二个账户的轨道圆环改用虚线
     /// （`useDashedTrack`，复用既有的虚线区分约定）。
     /// `showFiveHour`/`showSevenDay` 反映用户在设置中实际勾选展示的类型（finding #1）：
     /// 未勾选的窗口不绘制对应图形；若该账户在两个已勾选窗口上均无数据，返回占位图标兜底
     /// （理论上不应被 `createAccountGlyphIcons` 的前置过滤选中，这里仅作防御）。
     /// - Parameters:
-    ///   - snapshot: 账户用量快照
-    ///   - isNearLimit: 是否已临近上限（决定是否叠加警示描边）
-    ///   - appearance: 状态栏按钮的外观；通过 `performAsCurrentDrawingAppearance` 将其设为当前
-    ///     绘制外观，使 `NSColor` 动态颜色（如 `AccountColor.swiftUIColor` 转换而来的 `NSColor`）
-    ///     在 `lockFocus`/`unlockFocus` 离屏绘制期间按正确的浅色/深色变体解析——`NSImage.lockFocus()`
-    ///     本身并不会随菜单栏实际外观切换当前绘制外观（默认/沿用上一次设置，通常为 Aqua 浅色），
-    ///     若不显式设置，深色菜单栏下会错误解析出浅色变体的颜色（对比度不足，近乎不可见）。
-    ///   - showFiveHour: 用户是否勾选展示 5h 窗口
-    ///   - showSevenDay: 用户是否勾选展示 7d 窗口
-    ///   - isMonochrome: 是否为单色模式
-    ///   - useDashedTrack: 单色模式下是否使用虚线轨道以区分账户（通常仅第二个账户为 true）
+    /// - snapshot: 账户用量快照
+    /// - isNearLimit: 是否已临近上限（决定是否叠加警示描边）
+    /// - appearance: 状态栏按钮的外观；通过 `performAsCurrentDrawingAppearance` 将其设为当前
+    /// 绘制外观，使 `NSColor` 动态颜色（如 `AccountColor.swiftUIColor` 转换而来的 `NSColor`）
+    /// 在 `lockFocus`/`unlockFocus` 离屏绘制期间按正确的浅色/深色变体解析——`NSImage.lockFocus()`
+    /// 本身并不会随菜单栏实际外观切换当前绘制外观（默认/沿用上一次设置，通常为 Aqua 浅色），
+    /// 若不显式设置，深色菜单栏下会错误解析出浅色变体的颜色（对比度不足，近乎不可见）。
+    /// - showFiveHour: 用户是否勾选展示 5h 窗口
+    /// - showSevenDay: 用户是否勾选展示 7d 窗口
+    /// - isMonochrome: 是否为单色模式
+    /// - useDashedTrack: 单色模式下是否使用虚线轨道以区分账户（通常仅第二个账户为 true）
     private func createAccountGlyph(
         snapshot: AccountUsageSnapshot,
         isNearLimit: Bool,
@@ -621,12 +672,11 @@ class MenuBarIconRenderer {
 
     /// 按 provider 选出最紧迫的账户（`topUrgentAccounts`，上限 2 个），并映射为组合图标数组。
     /// - `types` 是用户当前实际勾选展示的类型（自定义模式下可能仅勾选 5h 或仅勾选 7d，
-    ///   甚至两者都未勾选）：两者都未勾选时直接返回空数组，不为该账户组渲染任何图形
-    ///   （P05 code review finding #1）。
-    /// - 先按「在已勾选窗口上是否有真实数据」过滤快照（finding #6），确保两个窗口均无数据
-    ///   （拉取失败/尚未加载）的账户不会因为可用账户不足 `limit` 而占据一个图标槽位、
-    ///   渲染出无意义的占位圆；`createAccountGlyph` 内部的防御性 guard 仍保留作为兜底，
-    ///   但不再作为主要过滤手段。
+    /// 甚至两者都未勾选）：两者都未勾选时直接返回空数组，不为该账户组渲染任何图形。
+    /// - 先按「在已勾选窗口上是否有真实数据」过滤快照，确保两个窗口均无数据
+    /// （拉取失败/尚未加载）的账户不会因为可用账户不足 `limit` 而占据一个图标槽位、
+    /// 渲染出无意义的占位圆；`createAccountGlyph` 内部的防御性 guard 仍保留作为兜底，
+    /// 但不再作为主要过滤手段。
     private func createAccountGlyphIcons(
         from snapshots: [AccountUsageSnapshot],
         showFiveHour: Bool,
@@ -708,9 +758,9 @@ class MenuBarIconRenderer {
 
     /// 组合多个图标到单个图像
     /// - Parameters:
-    ///   - icons: 要组合的图标数组
-    ///   - spacing: 图标间距
-    ///   - height: 统一高度（默认18）
+    /// - icons: 要组合的图标数组
+    /// - spacing: 图标间距
+    /// - height: 统一高度（默认18）
     /// - Returns: 组合后的图标
     private func combineIcons(_ icons: [NSImage], spacing: CGFloat = 3.0, height: CGFloat = 18) -> NSImage {
         guard !icons.isEmpty else {
@@ -740,10 +790,10 @@ class MenuBarIconRenderer {
 
     /// 根据限制类型和数据创建单个图标
     /// - Parameters:
-    ///   - type: 限制类型
-    ///   - data: 用量数据
-    ///   - isMonochrome: 是否为单色模式
-    ///   - button: 状态栏按钮
+    /// - type: 限制类型
+    /// - data: 用量数据
+    /// - isMonochrome: 是否为单色模式
+    /// - button: 状态栏按钮
     /// - Returns: 图标图像
     func createIconForType(
         _ type: LimitType,
@@ -762,7 +812,7 @@ class MenuBarIconRenderer {
 
         switch type {
         case .fiveHour, .sevenDay:
-            // P05: Claude 的 5h/7d 圆形指标已被账户组合图标（`createAccountGlyph`，
+            // Claude 的 5h/7d 圆形指标已被账户组合图标（`createAccountGlyph`，
             // 外圈进度环 + 内圈饼形扇区）取代，由 `createIcon` 单独通过
             // `createAccountGlyphIcons` 驱动，不再经由 `createIconForType` 渲染。
             return nil
@@ -790,16 +840,21 @@ class MenuBarIconRenderer {
             return ShapeIconRenderer.createHexagonIcon(percentage: percentage, isMonochrome: isMonochrome, button: button, removeBackground: removeBackground)
 
         case .codexPrimary, .codexSecondary, .codexExtraUsage:
-            // Codex 数据在 Phase 4 通过 createCodexIcon 独立渲染
+            // Codex 数据通过 createCodexIcon 独立渲染
             // createIconForType 仅处理 Claude UsageData，此处返回 nil
+            return nil
+
+        case .antigravityPrimary, .antigravitySecondary:
+            // 同 Codex：Antigravity 图标由 `createAccountGlyphIcons` 单独渲染，
+            // `createIconForType` 只处理 Claude `UsageData`，这里保持编译期占位、运行期无变化。
             return nil
         }
     }
 
     /// 根据 Codex 用量数据创建单个图标（Codex 专用）
     /// - Note: `.codexPrimary`/`.codexSecondary` 已迁移至 `createAccountGlyphIcons`（统一的
-    ///   环+饼形扇区账户组合图标，见 `buildCodexIcons`），此处只保留 `.codexExtraUsage` 的
-    ///   六边形渲染——那是一个独立的形状，与 5h/7d 等效窗口的环/扇区无关。
+    /// 环+饼形扇区账户组合图标，见 `buildCodexIcons`），此处只保留 `.codexExtraUsage` 的
+    /// 六边形渲染——那是一个独立的形状，与 5h/7d 等效窗口的环/扇区无关。
     func createCodexIcon(
         type: LimitType,
         percentage: Double,

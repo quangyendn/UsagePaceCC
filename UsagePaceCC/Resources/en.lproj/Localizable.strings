@@ -35,6 +35,7 @@
 "usage.refresh_cooldown" = "Please wait a moment";
 "usage.run_diagnostic" = "Run Diagnostic";
 "usage.codex_title" = "Codex Usage";
+"usage.antigravity_title" = "Antigravity Usage";
 
 // MARK: - Settings - Tabs
 "settings.tab.general" = "General";
@@ -88,7 +89,7 @@
 "settings.auth.hide_password" = "Hide";
 "settings.auth.manual_input_claude_only_help" = "Claude only: manual Session Key input is not supported for Codex.";
 
-// MARK: - Settings - Auth - Codex Data Source (dual-source picker, plan.md D8'/D9/D12/D13)
+// MARK: - Settings - Auth - Codex Data Source (dual-source picker)
 "settings.auth.codex_source_title" = "Codex Data Source";
 "settings.auth.codex_source_cli" = "Codex CLI";
 "settings.auth.codex_source_browser" = "Browser Session";
@@ -108,6 +109,42 @@
 "settings.auth.codex_cli_account_changed" = "Codex CLI is now signed in to a different ChatGPT account than the one you enabled. Enable again to track it.";
 "settings.auth.codex_cli_enable" = "Enable";
 "settings.auth.codex_cli_disable" = "Disable";
+
+// MARK: - Settings - Auth - Antigravity
+"settings.auth.antigravity_section_title" = "Antigravity";
+"settings.auth.antigravity_sign_in_explainer" = "Signing in opens Google in your browser. UsagePaceCC signs in using Antigravity's own Google OAuth client, so the consent screen will name Antigravity, not UsagePaceCC — that's expected, not a sign you're on the wrong page.";
+"settings.auth.antigravity_sign_in_button" = "Sign in with Google";
+"settings.auth.antigravity_sign_in_another" = "Add another account";
+"settings.auth.antigravity_sign_in_waiting" = "Waiting for your browser…";
+"settings.auth.antigravity_sign_in_exchanging" = "Finishing sign-in…";
+"settings.auth.antigravity_sign_in_resolving" = "Confirming your account…";
+"settings.auth.antigravity_sign_in_success" = "Signed in as %@";
+"settings.auth.antigravity_sign_in_success_no_email" = "Signed in";
+"settings.auth.antigravity_sign_in_identity_unconfirmed" = "Your identity could not be confirmed. Sign-in was cancelled.";
+"settings.auth.antigravity_sign_in_cancel" = "Cancel";
+"settings.auth.antigravity_sign_in_reopen" = "Open the sign-in page again";
+"settings.auth.antigravity_sign_in_close" = "Close";
+"settings.auth.antigravity_sign_in_window_title" = "Sign in to Antigravity";
+"settings.auth.antigravity_via_google" = "via Google sign-in";
+"settings.auth.antigravity_via_keychain" = "via Antigravity app";
+"settings.auth.antigravity_sign_out" = "Sign out";
+"settings.auth.antigravity_keychain_row_title" = "Use your Antigravity app sign-in";
+"settings.auth.antigravity_keychain_row_hint" = "Reads the account you're signed in to in Antigravity. Nothing is read or sent until you enable this.";
+"settings.auth.antigravity_keychain_enable" = "Enable";
+"settings.auth.antigravity_keychain_connect" = "Connect";
+"settings.auth.antigravity_keychain_connecting" = "Connecting…";
+"settings.auth.antigravity_keychain_not_connected" = "Not connected yet";
+"settings.auth.antigravity_keychain_connect_hint" = "macOS will ask for keychain permission. Choose Always Allow.";
+"settings.auth.antigravity_keychain_disable" = "Disable";
+"settings.auth.antigravity_keychain_reconnect" = "Reconnect";
+"settings.auth.antigravity_keychain_reconnect_reason" = "Keychain access needs to be granted again. Click Reconnect, or use Google sign-in above instead.";
+"settings.auth.antigravity_keychain_identity_changed_reason" = "The Antigravity sign-in in Keychain now points to a different Google account. Click Reconnect to use it, or use Google sign-in above instead.";
+"settings.auth.antigravity_source_preference_title" = "Preferred source";
+"settings.auth.antigravity_source_oauth" = "Google sign-in";
+"settings.auth.antigravity_source_keychain" = "Antigravity app";
+"settings.auth.antigravity_dedupe_line" = "Already tracked via Google sign-in.";
+"settings.auth.antigravity_accounts_title" = "Antigravity accounts";
+"settings.auth.antigravity_browser_page_body" = "Sign-in complete. You can close this window.";
 
 // MARK: - Settings - About
 "settings.about.version" = "Version %@";
@@ -201,13 +238,40 @@
 "error.unauthorized" = "Authentication failed, please check your credentials";
 "error.rate_limited" = "Too many requests, please try again later";
 
-// MARK: - Codex Source Errors (dual-source: CLI / Browser, see plan.md D9/D13)
+// MARK: - Codex Source Errors (dual-source: CLI / Browser)
 "error.codex_cli_expired_popover" = "Codex: run `codex` in Terminal to refresh";
 "error.codex_cli_expired_auth_tab" = "Codex CLI sign-in needs refreshing. Run any `codex` command in Terminal — UsagePaceCC never modifies your CLI sign-in.";
 "error.codex_cli_invalid_popover" = "Codex: run `codex login` in Terminal";
 "error.codex_cli_invalid_auth_tab" = "Codex CLI sign-in was rejected. Run `codex login` in Terminal, or switch to Browser Session.";
 "error.codex_browser_expired_popover" = "Codex: browser sign-in expired";
 "error.codex_browser_expired_auth_tab" = "Codex browser session expired. Sign in again, or switch to Codex CLI in Settings.";
+
+// MARK: - Antigravity Source Errors (mirrors AntigravityAuthError / AntigravitySourceError)
+"error.antigravity_keychain_not_found_popover" = "Antigravity keychain credential not found";
+"error.antigravity_keychain_not_found_auth_tab" = "Antigravity keychain credential not found. Sign in to the Antigravity app first, or use Google sign-in instead.";
+"error.antigravity_keychain_access_denied_popover" = "Antigravity keychain access denied";
+"error.antigravity_keychain_entitlement_missing_popover" = "Antigravity keychain access denied";
+"error.antigravity_keychain_access_denied_auth_tab" = "UsagePaceCC was denied access to the Antigravity keychain credential.";
+"error.antigravity_keychain_malformed_popover" = "Antigravity keychain credential is malformed";
+"error.antigravity_no_access_token_popover" = "Antigravity credential has no access token";
+"error.antigravity_keychain_malformed_auth_tab" = "The Antigravity keychain credential could not be parsed.";
+"error.antigravity_keychain_not_connected_popover" = "Antigravity keychain not connected yet";
+"error.antigravity_keychain_not_connected_auth_tab" = "Antigravity keychain not connected yet. Click Connect to read it.";
+"error.antigravity_signin_cancelled_popover" = "Antigravity sign-in was cancelled";
+"error.antigravity_signin_already_in_progress_popover" = "Antigravity sign-in is already in progress";
+"error.antigravity_loopback_failed_popover" = "Antigravity sign-in couldn't start. Please try again.";
+"error.antigravity_state_mismatch_popover" = "Antigravity sign-in state mismatch";
+"error.antigravity_code_exchange_failed_popover" = "Antigravity sign-in could not complete. Please try again.";
+"error.antigravity_refresh_token_revoked_popover" = "Antigravity: sign in again";
+"error.antigravity_refresh_token_revoked_auth_tab" = "Antigravity sign-in was revoked. Please sign in again.";
+"error.antigravity_secrets_unavailable_popover" = "Antigravity sign-in isn't available in this build";
+"error.antigravity_expired_unrefreshable_popover" = "Antigravity access token expired and cannot be refreshed";
+"error.antigravity_expired_unrefreshable_auth_tab" = "Antigravity credential expired and could not be refreshed.";
+"error.antigravity_subscription_required_popover" = "Antigravity subscription required or access scope rejected";
+"error.antigravity_subscription_required_auth_tab" = "Antigravity subscription required, or the requested access scope was rejected.";
+"error.antigravity_usage_unauthorized_popover" = "Antigravity: sign-in expired";
+"error.antigravity_usage_unauthorized_auth_tab" = "Antigravity sign-in expired. Please sign in again.";
+"error.antigravity_usage_rate_limited_popover" = "Antigravity: too many requests";
 
 // MARK: - Launch at Login
 "launch.status.enabled" = "Enabled";
@@ -286,6 +350,9 @@
 "codex_primary_limit_short" = "5h";
 "codex_secondary_limit_short" = "7d";
 "codex_limit_neutral_short" = "Codex";
+"antigravity_primary_limit" = "Antigravity · Gemini";
+"antigravity_secondary_limit" = "Antigravity · 3P Models";
+"antigravity_limit_neutral" = "Antigravity Limit";
 
 // MARK: - Detail Row Labels
 "detail_row.five_hour_limit" = "5-Hour Limit";

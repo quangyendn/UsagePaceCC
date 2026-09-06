@@ -23,11 +23,26 @@ struct UsageDetailView: View {
     @Binding var hasAvailableUpdate: Bool
     /// 是否应显示更新徽章（用户未确认时才显示徽章）
     @Binding var shouldShowUpdateBadge: Bool
-    /// 所有已保存的 Claude 账户快照（P03）。驱动 Linear 模式下新的账户驱动图表点/图例行。
-    /// 与 usageData/codexUsageData/errorMessage 一样是 @Binding（code-review fix 1）：popover
+    /// 所有已保存的 Claude 账户快照。驱动 Linear 模式下新的账户驱动图表点/图例行。
+    /// 与 usageData/codexUsageData/errorMessage 一样是 @Binding：popover
     /// 打开时是同步构造的，异步刷新落地后必须能通过这个 binding 反映到已打开的 popover 里，
     /// 而不是构造时的一次性快照——否则整个 popover 打开期间 5h/7d 内容永远空白/过期。
     @Binding var claudeSnapshots: [AccountUsageSnapshot]
+    /// 所有已保存的 Antigravity 账户快照，与 `claudeSnapshots` 同一形状/同一 Binding 理由。
+    @Binding var antigravitySnapshots: [AccountUsageSnapshot]
+    /// 智能模式下 Antigravity primary/secondary 类型是否要显示；跨全部
+    /// 已拉取账户合并——只要任意账户具备该槽位即为 true，喂给
+    /// `UserSettings.getActiveDisplayTypes(hasAntigravityPrimary:hasAntigravitySecondary:)` 做类型
+    /// 显隐判断。真正的多账户渲染数据来自 `antigravitySnapshots`，不受这两个字段影响。
+    @Binding var hasAntigravityPrimary: Bool
+    @Binding var hasAntigravitySecondary: Bool
+    /// Antigravity provider 级错误行文案；仅在"至少配置了一个 Antigravity 账户，且
+    /// **全部**已知账户当前都带着错误（`antigravitySnapshots` 为空，或其中每一份快照的
+    /// `errorMessage` 都非 nil）"时才会真正显示成一行（见 `antigravityErrorRow` 和
+    /// `PopoverLayout.rowCount` 上的规则说明）。只要仍有至少一个账户健康，这里不显示——
+    /// 单个账户失败、其它账户仍成功属于此类；但一个账户"永久失败但仍渲染上一次缓存数据"
+    /// 不再豁免于这条规则（否则该账户的行会永远存在、错误永远不可见）。
+    @Binding var antigravityErrorMessage: String?
 
     /// 菜单操作类型
     enum MenuAction {
@@ -57,22 +72,50 @@ struct UsageDetailView: View {
         refreshState.isRefreshingProvider(.claude)
     }
 
-    /// 头部展示的 Provider：Claude 数据存在或 Claude 凭据有效时用 Claude 品牌，
-    /// 否则（Codex-only）用 Codex 品牌。
+    /// 头部展示的 Provider（三路 Claude/Codex/Antigravity）：`UserSettings.activeProviders` 顺序恒为
+    /// Claude → Codex → Antigravity；取第一个"当前已有数据"的 Provider，
+    /// 全都还没数据时退化为第一个已配置的 Provider（首次打开、尚在 loading 时）。
+    /// - Important: Claude 的"已有数据"判断必须额外把 `errorMessage != nil` 和
+    ///   `UserSettings.shared.hasValidCredentials` 计入，不能只看 `usageData != nil`——旧规则是
+    ///   `(usageData != nil || hasValidCredentials) ? .claude : .codex`，`hasValidCredentials`
+    ///   这一项是承重的：只要 Claude 已配置，无论有没有数据/是否出错，header 恒定钉在 Claude，
+    ///   不会因为"谁的请求先落地"或"Claude 恰好在报错"而翻转到 Codex/Antigravity。
+    ///   去掉它会导致：Claude token 过期时 `usageData == nil && errorMessage != nil`，
+    ///   若 Codex 有数据则 header 显示 Codex 图标却盖在 Claude 错误卡片上方；冷启动时谁的请求
+    ///   先返回谁就抢到 header；多账户下 Claude 账户 #1 出错、#2 成功时 `usageData` 仍为 nil
+    ///   （`assignFirstClaudeAccountState` 的行为）也会误判 Claude "没有数据"。
     private var primaryProvider: ProviderType {
-        (usageData != nil || UserSettings.shared.hasValidCredentials) ? .claude : .codex
+        let active = UserSettings.shared.activeProviders
+        let withData = active.first { provider in
+            switch provider {
+            case .claude:
+                return usageData != nil || errorMessage != nil || UserSettings.shared.hasValidCredentials
+            case .codex: return codexUsageData != nil
+            case .antigravity:
+                // Exact presence test rather than `!antigravitySnapshots.isEmpty`:
+                // a never-succeeded, currently-errored account still produces a snapshot
+                // with both windows nil, which would otherwise make an Antigravity-only user's
+                // header falsely claim "has data" on a first-fetch failure. Matches
+                // `hasAntigravityPrimary`/`hasAntigravitySecondary` in `MenuBarManager.swift`.
+                return antigravitySnapshots.contains { $0.fiveHour != nil || $0.sevenDay != nil }
+            }
+        }
+        return withData ?? active.first ?? .claude
     }
 
-    /// 新的账户驱动图例行：`claudeSnapshots` 的 5h/7d 行
-    /// + Codex 单账户包装出的 primary 行。
+    /// 账户驱动图例行：`claudeSnapshots` 的 5h/7d 行 + Codex 单账户包装出的 primary 行
+    /// + `antigravitySnapshots` 的 5h/7d 槽位行（与 Claude 那条多账户路径同款循环）。
     private var legendItems: [LegendRowItem] {
         PopoverLayout.legendItems(
             claudeSnapshots: claudeSnapshots,
             codexUsageData: codexUsageData,
             codexAccount: UserSettings.shared.currentCodexAccount,
+            antigravitySnapshots: antigravitySnapshots,
             activeDisplayTypes: UserSettings.shared.getActiveDisplayTypes(
                 usageData: usageData,
-                codexUsageData: codexUsageData
+                codexUsageData: codexUsageData,
+                hasAntigravityPrimary: hasAntigravityPrimary,
+                hasAntigravitySecondary: hasAntigravitySecondary
             )
         )
     }
@@ -104,7 +147,11 @@ struct UsageDetailView: View {
             codexUsageData: codexUsageData,
             codexErrorMessage: codexErrorMessage,
             claudeSnapshots: claudeSnapshots,
-            codexAccount: UserSettings.shared.currentCodexAccount
+            codexAccount: UserSettings.shared.currentCodexAccount,
+            hasAntigravityPrimary: hasAntigravityPrimary,
+            hasAntigravitySecondary: hasAntigravitySecondary,
+            antigravitySnapshots: antigravitySnapshots,
+            antigravityErrorMessage: antigravityErrorMessage
         )
         return PopoverLayout.height(rowCount: rowCount)
     }
@@ -155,7 +202,7 @@ struct UsageDetailView: View {
         .padding()
     }
 
-    /// Codex 的紧凑错误行（P06 新增）：`codexOnlyMainContent` 曾是 `codexErrorMessage`
+    /// Codex 的紧凑错误行：`codexOnlyMainContent` 曾是 `codexErrorMessage`
     /// 唯一的渲染出口，删除它之后必须在这里补上——CLI token 大约每 10 天过期一次，
     /// 这是常规路径，不是边角情况。占据一个 legend 行的位置，点按跳转到 Auth 设置。
     @ViewBuilder
@@ -174,6 +221,49 @@ struct UsageDetailView: View {
                             .font(.system(size: 12))
                             .foregroundColor(.orange)
                     }
+
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+                .padding(.vertical, 2)
+                .padding(.horizontal, 12)
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+        }
+    }
+
+    /// Antigravity 的 provider 级错误行——与 `codexErrorRow` 同一视觉语言，但触发规则
+    /// 不同（见 `antigravityErrorMessage` 上的说明 / `PopoverLayout.rowCount`）：只要还有至少
+    /// 一个账户当前健康（`errorMessage == nil`），就不显示这一行——那个账户的行仍在正常渲染，
+    /// 不应该被一条 provider 级错误盖过去。只有**全部**已知 Antigravity 账户都带着错误
+    /// （包括"失败但仍在渲染上一次缓存数据"的账户）时才显示这一条代表性错误——这是必须补上的
+    /// 场景：一个长期失败的账户会一直渲染陈旧数据、`legendItems` 里永远有它的行，
+    /// 单看"是否渲染出行"永远不会再触发这条错误提示。
+    /// - Important: 这里的判定条件必须与 `PopoverLayout.rowCount` 里同名的 `||` 表达式逐字符
+    ///   相同（Locked Constraint：行数计算与实际渲染不能对不上）。
+    @ViewBuilder
+    private var antigravityErrorRow: some View {
+        if let error = antigravityErrorMessage,
+           antigravitySnapshots.isEmpty || antigravitySnapshots.allSatisfy({ $0.errorMessage != nil }) {
+            Button(action: {
+                onMenuAction?(.authSettings)
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.orange)
 
                     Text(error)
                         .font(.system(size: 12))
@@ -231,16 +321,18 @@ struct UsageDetailView: View {
     }
 
     /// 单列主体内容：Claude 报错时整页替换（不变）；只要任一 Provider 有数据或报错
-    /// 就展示 图 + legend + Codex 错误行；两边都还没有任何数据/错误时展示通用 loading。
+    /// 就展示 图 + legend + Codex/Antigravity 错误行；三边都还没有任何数据/错误时展示通用 loading。
     @ViewBuilder
     private var mainContent: some View {
         if let error = errorMessage {
             claudeErrorView(error)
-        } else if usageData != nil || codexUsageData != nil || codexErrorMessage != nil {
+        } else if usageData != nil || codexUsageData != nil || codexErrorMessage != nil
+                    || !antigravitySnapshots.isEmpty || antigravityErrorMessage != nil {
             VStack(spacing: 15) {
                 usageGraphArea()
                 legendSection
                 codexErrorRow
+                antigravityErrorRow
             }
         } else {
             // 加载中
@@ -359,6 +451,15 @@ struct UsageDetailView: View {
         }
     }
 
+    /// 头部标题（三路，替代原来的二元三元表达式）。
+    private func headerTitle(for provider: ProviderType) -> String {
+        switch provider {
+        case .claude: return L.Usage.title
+        case .codex: return L.Usage.codexTitle
+        case .antigravity: return L.Usage.antigravityTitle
+        }
+    }
+
     @ViewBuilder
     private func headerView(provider: ProviderType, showsControls: Bool) -> some View {
         let headerIconSize: CGFloat = 18
@@ -373,13 +474,20 @@ struct UsageDetailView: View {
                     Image(systemName: "chart.pie.fill")
                         .foregroundColor(.blue)
                 }
-            } else if let icon = ImageHelper.createCodexIcon(size: headerIconSize) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: headerIconSize, height: headerIconSize)
+            } else if provider == .codex {
+                if let icon = ImageHelper.createCodexIcon(size: headerIconSize) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: headerIconSize, height: headerIconSize)
+                }
+            } else {
+                // Antigravity 头部固定使用系统符号占位（不读取品牌图标资源），与
+                // Claude/Codex 走独立图标资源的做法不同，保持头部视觉简洁。
+                Image(systemName: "sparkles")
+                    .foregroundColor(.blue)
             }
 
-            Text(provider == .claude ? L.Usage.title : L.Usage.codexTitle)
+            Text(headerTitle(for: provider))
                 .font(.headline)
 
             Spacer()
@@ -504,6 +612,10 @@ struct UsageDetailView_Previews: PreviewProvider {
     @State static var hasUpdate = false
     @State static var shouldShowBadge = false
     @State static var snapshots: [AccountUsageSnapshot] = []
+    @State static var antigravitySnapshots: [AccountUsageSnapshot] = []
+    @State static var hasAntigravityPrimary = false
+    @State static var hasAntigravitySecondary = false
+    @State static var antigravityErrorMsg: String? = nil
 
     static var previews: some View {
         UsageDetailView(
@@ -514,7 +626,11 @@ struct UsageDetailView_Previews: PreviewProvider {
             refreshState: refreshState,
             hasAvailableUpdate: $hasUpdate,
             shouldShowUpdateBadge: $shouldShowBadge,
-            claudeSnapshots: $snapshots
+            claudeSnapshots: $snapshots,
+            antigravitySnapshots: $antigravitySnapshots,
+            hasAntigravityPrimary: $hasAntigravityPrimary,
+            hasAntigravitySecondary: $hasAntigravitySecondary,
+            antigravityErrorMessage: $antigravityErrorMsg
         )
     }
 }

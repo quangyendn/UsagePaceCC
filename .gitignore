@@ -99,3 +99,6 @@ ClaudeUsageMonitor
 # Planning artifacts (local only)
 plans/
 docs/superpowers/
+
+# Antigravity OAuth secrets (generated locally by scripts/extract-antigravity-oauth.sh)
+UsagePaceCC/Resources/AntigravityOAuth.plist
