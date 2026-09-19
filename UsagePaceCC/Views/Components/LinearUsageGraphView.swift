@@ -184,10 +184,12 @@ struct LinearUsageGraphView: View {
         let dashStyle = StrokeStyle(
             lineWidth: paceLineWidth,
             lineCap: .round,
-            dash: [4, 4]
+            dash: [6, 3]
         )
 
-        context.stroke(path, with: .color(Color.gray.opacity(0.5)), style: dashStyle)
+        // Use the adaptive label color (dark on light, light on dark) instead of mid-gray so the
+        // reference line stays legible against both the grid lines and the popover background.
+        context.stroke(path, with: .color(Color.primary.opacity(0.6)), style: dashStyle)
     }
 
     /// Draw colored dots for each active limit type with percentage labels
