@@ -352,6 +352,8 @@
 "codex_limit_neutral_short" = "Codex";
 "antigravity_primary_limit" = "Antigravity · Gemini";
 "antigravity_secondary_limit" = "Antigravity · 3P Models";
+"antigravity_primary_limit_short" = "Gemini";
+"antigravity_secondary_limit_short" = "3P";
 "antigravity_limit_neutral" = "Antigravity Limit";
 
 // MARK: - Detail Row Labels

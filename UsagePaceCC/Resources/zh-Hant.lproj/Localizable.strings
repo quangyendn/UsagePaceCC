@@ -490,4 +490,6 @@
 "error.antigravity_usage_rate_limited_popover" = "Antigravity：請求過於頻繁";
 "antigravity_primary_limit" = "Antigravity · Gemini";
 "antigravity_secondary_limit" = "Antigravity · 第三方模型";
+"antigravity_primary_limit_short" = "Gemini";
+"antigravity_secondary_limit_short" = "第三方";
 "antigravity_limit_neutral" = "Antigravity 限額";

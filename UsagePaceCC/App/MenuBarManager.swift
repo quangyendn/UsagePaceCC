@@ -299,12 +299,12 @@ class MenuBarManager: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // 监听账户颜色变更通知：仅需从已缓存数据重建快照并重绘，无需重新发起网络请求
-        NotificationCenter.default.publisher(for: .accountColorChanged)
+        // 监听账户外观（颜色/别名）变更通知：仅需从已缓存数据重建快照并重绘，无需重新发起网络请求
+        NotificationCenter.default.publisher(for: .accountAppearanceChanged)
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 self.ui.clearIconCache()
-                self.dataManager.handleAccountColorChanged()
+                self.dataManager.handleAccountAppearanceChanged()
                 self.updateMenuBarIcon()
             }
             .store(in: &cancellables)

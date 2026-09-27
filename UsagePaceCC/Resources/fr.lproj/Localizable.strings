@@ -490,4 +490,6 @@
 "error.antigravity_usage_rate_limited_popover" = "Antigravity : trop de requêtes";
 "antigravity_primary_limit" = "Antigravity · Gemini";
 "antigravity_secondary_limit" = "Antigravity · Modèles tiers";
+"antigravity_primary_limit_short" = "Gemini";
+"antigravity_secondary_limit_short" = "Tiers";
 "antigravity_limit_neutral" = "Limite Antigravity";

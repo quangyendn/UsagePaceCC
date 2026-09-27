@@ -523,6 +523,10 @@ enum L {
         /// 非英文语言缺失该 key 时由 `localized(_:)` 回退到 en 文案，而非原样退回 key。
         static var antigravityPrimary: String { localized("antigravity_primary_limit") }
         static var antigravitySecondary: String { localized("antigravity_secondary_limit") }
+        /// 弹窗图例行专用的短标签（同 Claude 的 `fiveHourLimitShort`/`sevenDayLimitShort`）：
+        /// 行内已有账户名前缀，长标签里的 "Antigravity · " 会把真正区分两行的部分挤出可见宽度。
+        static var antigravityPrimaryShort: String { localized("antigravity_primary_limit_short") }
+        static var antigravitySecondaryShort: String { localized("antigravity_secondary_limit_short") }
 
         /// Window-derived Codex legend label. Never trust `.codexPrimary`'s hardcoded
         /// "Codex 5-Hour Limit" for a window whose actual length is unknown — this account has been

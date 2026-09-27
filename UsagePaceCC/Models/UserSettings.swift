@@ -1216,6 +1216,8 @@ class UserSettings: ObservableObject {
         guard let index = antigravityAccounts.firstIndex(where: { $0.id == account.id }) else { return }
         antigravityAccounts[index].alias = alias
         Logger.settings.notice("更新 Antigravity 账户别名: \(self.antigravityAccounts[index].displayName)")
+        // 快照里的 displayName 是拉取时拍下的，别名变更需主动重建，否则 popover 要等下一次拉取才更新
+        NotificationCenter.default.post(name: .accountAppearanceChanged, object: nil)
     }
 
     /// `AntigravityTokenProvider` 的 refresh token 读取钩子绑定目标：只读 `.oauth` 账户的
@@ -2331,6 +2333,7 @@ class UserSettings: ObservableObject {
         accounts[index].alias = alias
         let displayName = accounts[index].displayName
         Logger.settings.notice("更新账户别名: \(displayName)")
+        NotificationCenter.default.post(name: .accountAppearanceChanged, object: nil)
     }
 
     /// 更新账户颜色
@@ -2349,7 +2352,7 @@ class UserSettings: ObservableObject {
             return
         }
         // 仅重建快照的颜色字段，不发起网络请求；已缓存的用量数据保持不变
-        NotificationCenter.default.post(name: .accountColorChanged, object: nil)
+        NotificationCenter.default.post(name: .accountAppearanceChanged, object: nil)
     }
 
     /// 用于显示的账户列表
