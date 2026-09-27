@@ -1297,6 +1297,34 @@ struct AuthSettingsView: View {
                 .buttonStyle(.bordered)
             }
 
+            // 别名编辑：Antigravity 是多账户行而非单一"当前账户"详情卡片，所以别名直接内联在每行里
+            HStack(spacing: 6) {
+                Image(systemName: "tag.fill")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                TextField(account.organizationName, text: Binding(
+                    get: { account.alias ?? "" },
+                    set: { newValue in
+                        settings.updateAntigravityAccount(account, alias: newValue.isEmpty ? nil : newValue)
+                    }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .help(L.Account.alias)
+
+                if let alias = account.alias, !alias.isEmpty {
+                    Button(action: {
+                        settings.updateAntigravityAccount(account, alias: nil)
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L.Account.clearAlias)
+                }
+            }
+            .padding(.leading, 20)
+
             // 单账户级别的拉取错误：`DataRefreshManager.mergeAntigravityResult` 把它同步镜像进
             // `UserSettings.antigravityAccountErrors`（这个视图层边界是既有设计——
             // `AuthSettingsView()` 在 `SettingsView` 里零依赖构造，不持有 `DataRefreshManager`
