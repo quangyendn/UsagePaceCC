@@ -1103,8 +1103,8 @@ class DataRefreshManager: ObservableObject {
         }
     }
 
-    /// 账户颜色变更后仅从已缓存数据重建快照，不发起任何网络请求
-    func handleAccountColorChanged() {
+    /// 账户颜色/别名变更后仅从已缓存数据重建快照，不发起任何网络请求
+    func handleAccountAppearanceChanged() {
         rebuildClaudeSnapshots()
         rebuildAntigravitySnapshots()
     }
