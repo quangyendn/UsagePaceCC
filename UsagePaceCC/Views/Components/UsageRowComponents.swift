@@ -211,9 +211,9 @@ struct UnifiedLimitRow: View {
                 // 短格式版本，与 Claude 的 fiveHourLimitShort/sevenDayLimitShort 同样精简。
                 windowLabel = L.LimitTypes.codexWindowNameShort(windowSeconds: accountItem.windowUsage?.windowSeconds)
             case .antigravity:
-                // 静态本地化短标签：bucket 0 → Gemini, bucket 1 → 3P。
+                // 静态本地化短标签：bucket 0 → Gemini, bucket 1 → 3P（第三方模型）。
                 // 服务端 `group.displayName`（如 "Claude and GPT models"）只进 tooltip，不进这里。
-                windowLabel = accountItem.window == .fiveHour ? L.LimitTypes.antigravityPrimary : L.LimitTypes.antigravitySecondary
+                windowLabel = accountItem.window == .fiveHour ? L.LimitTypes.antigravityPrimaryShort : L.LimitTypes.antigravitySecondaryShort
             case .claude:
                 windowLabel = accountItem.window == .fiveHour ? L.Usage.fiveHourLimitShort : L.Usage.sevenDayLimitShort
             }
