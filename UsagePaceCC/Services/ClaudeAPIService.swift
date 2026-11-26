@@ -581,7 +581,8 @@ nonisolated struct Organization: Codable, Sendable, Identifiable, Equatable {
 /// 对应 Claude API 返回的 JSON 结构
 nonisolated struct UsageResponse: Codable, Sendable {
     /// 5小时用量限制数据
-    let five_hour: LimitUsage
+    /// - Note: 可选——部分套餐（如 Ultra）已取消 5 小时限制，API 会省略该字段或返回 null
+    let five_hour: LimitUsage?
     /// 7天用量限制数据
     let seven_day: LimitUsage?
     /// 7天 OAuth 应用用量（暂未使用）
@@ -593,8 +594,8 @@ nonisolated struct UsageResponse: Codable, Sendable {
 
     /// 通用限制用量详情（适用于5小时、7天等各种限制）
     struct LimitUsage: Codable, Sendable {
-        /// 当前使用率 (0-100，可以是浮点数)
-        let utilization: Double
+        /// 当前使用率 (0-100，可以是浮点数)；限制被取消时 API 可能返回 null
+        let utilization: Double?
         /// 重置时间（ISO 8601 格式），nil 表示尚未开始使用
         let resets_at: String?
     }
@@ -603,8 +604,14 @@ nonisolated struct UsageResponse: Codable, Sendable {
     /// - Returns: 转换后的 UsageData 实例
     /// - Note: 会自动处理时间四舍五入，确保显示准确
     func toUsageData() -> UsageData {
-        // 解析5小时限制数据
-        let fiveHourData = parseLimitData(five_hour)
+        // 解析5小时限制数据；已取消 5 小时限制的套餐（如 Ultra）返回 nil，UI 会隐藏该窗口
+        let fiveHourData: UsageData.LimitData? = {
+            guard let fiveHour = five_hour, fiveHour.utilization != nil else {
+                return nil
+            }
+            let parsed = parseLimitData(fiveHour)
+            return UsageData.LimitData(percentage: parsed.percentage, resetsAt: parsed.resetsAt)
+        }()
 
         // 解析7天限制数据。所有 Claude 账号都有 7 天限制；
         // 未开始使用时 API 可能返回 0 且无 resets_at，仍保留为 0% 占位。
@@ -621,7 +628,7 @@ nonisolated struct UsageResponse: Codable, Sendable {
             guard let opus = seven_day_opus else {
                 return nil
             }
-            if opus.utilization == 0 && opus.resets_at == nil {
+            if (opus.utilization ?? 0) == 0 && opus.resets_at == nil {
                 return nil
             }
             let parsed = parseLimitData(opus)
@@ -633,7 +640,7 @@ nonisolated struct UsageResponse: Codable, Sendable {
             guard let sonnet = seven_day_sonnet else {
                 return nil
             }
-            if sonnet.utilization == 0 && sonnet.resets_at == nil {
+            if (sonnet.utilization ?? 0) == 0 && sonnet.resets_at == nil {
                 return nil
             }
             let parsed = parseLimitData(sonnet)
@@ -641,7 +648,7 @@ nonisolated struct UsageResponse: Codable, Sendable {
         }()
 
         return UsageData(
-            fiveHour: UsageData.LimitData(percentage: fiveHourData.percentage, resetsAt: fiveHourData.resetsAt),
+            fiveHour: fiveHourData,
             sevenDay: sevenDayData,
             opus: opusData,
             sonnet: sonnetData,
@@ -672,7 +679,7 @@ nonisolated struct UsageResponse: Codable, Sendable {
             resetsAt = nil
         }
 
-        return (percentage: Double(limit.utilization), resetsAt: resetsAt)
+        return (percentage: limit.utilization ?? 0, resetsAt: resetsAt)
     }
 }
 
